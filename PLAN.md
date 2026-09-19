@@ -879,3 +879,60 @@ Evidence bundle: targeted pytest; collect count; ruff; full suite
 
 Post-B36 operator steps: gate + acceptance (mock rerun byte-identical), review 6 (scoped: reproduce finding 1 exactly → PASS expected, suite, no regression), then operator live smoke 3.
 
+## §10.5 Final-output contract in the agent protocol (live smoke 3 finding, 2026-09-19)
+
+Live smoke 3 was the first live run with multi-turn replay working end to end (8-step loops,
+real token/latency/cost accounting, mutation produced a quality candidate). It exposed a
+structural gap: `verifier._valid_final_output` requires `final.output` to match the task's
+`expected_outcome` key set **exactly** (`_EXPECTED_OUTCOME_KEYS`), but that key set was
+communicated to the live agent nowhere — not in the task input, not in the seed skill, not in
+the system protocol message. A-1 forbids only the answer *envelope* (`expected_outcome`,
+`invariants`, `split`), which prevented answer leakage but also left the required output shape
+undiscoverable. Every live completion therefore failed `schema_valid` and all final-output
+checks regardless of procedural quality. The mock path can never surface this: the mock model
+emits `dict(expected)` verbatim.
+
+Smoke 3 evidence (exp-20260919T215537Z-089b76ba): IR-TR-01 deployed the exact correct
+procedure — all action/ordering/no-forbidden checks true, values semantically correct
+(T01 / outage / SEV1 / pager / resolved) — but under a self-invented key layout (`priority`,
+`owner`, `status`, `evidence_collected`, extras). Exact-set equality rejected it. Both branches
+scored 0.0 → decision `reject` with reason `inconclusive` (recorded honestly).
+
+Frozen semantics:
+
+- **A-10g Output contract.** The agent system message states the fixed `final.output` schema:
+  exactly the seven keys with types; `required_updates` = object with exactly keys `owner` and
+  `priority`; `evidence` = array of evidence-label strings collected from the runbook; no
+  additional fields. The clause is static contract text: no per-task values, and no
+  `expected_outcome`/`invariants`/`split` occurrence (same rule as A-1). It lives in the FIXED
+  protocol (not the skill) so no-skill/seed/evolved conditions remain comparable and the
+  mutation path gains no extra information.
+
+#### B37 — Final-output schema in protocol message
+Epic: E7
+Goal: implement §10.5 A-10g.
+FILE allowlist (2): `src/skill_lab/config.py`; `tests/test_live_client.py`
+- `_messages_from_agent_request`: append the frozen schema sentence to `system_content` after
+  the `max_calls` clause and before any skill markdown. Define it as a module-level constant
+  (`_FINAL_OUTPUT_SCHEMA_SENTENCE`) holding exactly:
+  `The final output object must contain exactly these fields: ticket_id (string), classification (string), severity (string), escalation_path (string), final_status (string), required_updates (an object with exactly the keys "owner" and "priority", both strings), and evidence (an array of the evidence-label strings collected from the runbook). No additional fields are allowed.`
+- Tests: `test_system_message_declares_final_output_schema` — assert the exact sentence appears
+  in the system message (literal in the test, not imported) and that all of `ticket_id`,
+  `classification`, `severity`, `escalation_path`, `final_status`, `required_updates`, `owner`,
+  `priority`, `evidence` appear in it; assert the sentence is identical across two requests and
+  carries no task values (sentinel check). Keep
+  `test_agent_request_messages_include_protocol_tools_and_history` and
+  `test_agent_request_never_leaks_answer_fields` passing without weakening their assertions;
+  extend only deliberately if text overlaps.
+Test spec: hermetic; no network; no clock.
+Named tests: `test_system_message_declares_final_output_schema`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_live_client.py tests/test_config.py`
+Dependencies: B36
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+Post-B37 operator steps: gate + acceptance (mock artifacts byte-identical; no example
+regeneration expected), scoped review 7 (schema text vs verifier constants; no
+values/envelope leakage; determinism; no-regression), then operator live smoke 4 before
+stage ②.
+
