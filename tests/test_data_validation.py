@@ -39,7 +39,6 @@ def test_fixture_outcome_mismatch_is_reported(tmp_path: Path) -> None:
 
     assert errors == sorted(errors)
     assert any(
-        "fixture tickets record does not match the frozen packet" in error
-        for error in errors
+        "fixture tickets record does not match the frozen packet" in error for error in errors
     )
     assert any("IR-VA-01 severity contradicts its fixture ticket" in error for error in errors)

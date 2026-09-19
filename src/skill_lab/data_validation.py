@@ -358,9 +358,7 @@ _TRAP_MATRIX = {
             "IR-TE-04",
         }
     ),
-    "wrong path": frozenset(
-        {"IR-TR-03", "IR-TR-04", "IR-VA-05", "IR-VA-06"}
-    ),
+    "wrong path": frozenset({"IR-TR-03", "IR-TR-04", "IR-VA-05", "IR-VA-06"}),
     "unnecessary search": frozenset({"IR-TR-05", "IR-TR-06"}),
     "update-before-escalate": frozenset({"IR-TR-07", "IR-TR-08"}),
     "forbidden path": frozenset(
@@ -504,10 +502,7 @@ def _index_records(
         return {}
     if len(records) != len(expected):
         errors.add(f"fixture {label} must contain {len(expected)} records")
-    expected_ids = {
-        record.get("id", record.get("service_id"))
-        for record in expected
-    }
+    expected_ids = {record.get("id", record.get("service_id")) for record in expected}
     indexed: dict[str, dict[str, object]] = {}
     for record in records:
         if not isinstance(record, dict):
@@ -533,9 +528,7 @@ def _index_records(
     return indexed
 
 
-def _validate_task_trap_matrix(
-    tasks: dict[str, dict[str, object]], errors: set[str]
-) -> None:
+def _validate_task_trap_matrix(tasks: dict[str, dict[str, object]], errors: set[str]) -> None:
     assigned = set().union(*_TRAP_MATRIX.values())
     expected_ids = set(_TASK_SPEC_BY_ID)
     if assigned != expected_ids:
@@ -575,9 +568,7 @@ def _validate_tasks(data: object, errors: set[str]) -> dict[str, dict[str, objec
 
     split_counts = {
         split: sum(
-            1
-            for record in data
-            if isinstance(record, dict) and record.get("split") == split
+            1 for record in data if isinstance(record, dict) and record.get("split") == split
         )
         for split in ("train", "validation", "test")
     }
@@ -688,8 +679,7 @@ def _validate_consistency(
 
         invariants = task.get("invariants")
         approval_invariant = (
-            isinstance(invariants, list)
-            and "approval_before_escalation" in invariants
+            isinstance(invariants, list) and "approval_before_escalation" in invariants
         )
         approval_required = customer.get("approval_required")
         if isinstance(approval_required, bool) and approval_invariant != approval_required:
