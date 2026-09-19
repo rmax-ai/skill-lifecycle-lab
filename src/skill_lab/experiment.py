@@ -12,14 +12,17 @@ from typing import Any
 from skill_lab.agent import AgentConfig, ChatModel, run_agent
 from skill_lab.metrics import EvaluationSummary, estimate_cost, summarize_runs
 from skill_lab.models import (
+    CandidateSkill,
     Condition,
     Outcome,
+    PromotionDecision,
     RunRecord,
     Split,
     Task,
     Trajectory,
     VerificationResult,
 )
+from skill_lab.promotion import PromotionPolicy, apply_promotion, decide_promotion
 from skill_lab.skills import Skill
 from skill_lab.storage import ExperimentStore
 from skill_lab.tasks import tasks_for_split
@@ -47,6 +50,19 @@ class _UsageCapturingModel:
         response = self._model.complete(request)
         self.usages.append(_usage_from_response(response, self._model))
         return response
+
+
+class _RunCollector:
+    """Collect evaluated runs while optionally forwarding them to a store."""
+
+    def __init__(self, store: ExperimentStore | None) -> None:
+        self.runs: list[RunRecord] = []
+        self._store = store
+
+    def insert_run(self, run: RunRecord) -> None:
+        if self._store is not None:
+            self._store.insert_run(run)
+        self.runs.append(run)
 
 
 def evaluate_condition(
@@ -167,6 +183,102 @@ def evaluate_condition(
         parent_runs=parent_runs,
         no_skill_runs=no_skill_runs,
     )
+
+
+def evaluate_validation_gate(
+    tasks: Sequence[Task],
+    fixtures: Mapping[str, Any] | Path | str | None = None,
+    model: ChatModel | None = None,
+    agent_config: AgentConfig | None = None,
+    *,
+    experiment_id: str,
+    parent_skill: Skill,
+    candidate_skill: Skill | CandidateSkill,
+    skills_root: Path | str | None = None,
+    policy: PromotionPolicy | Mapping[str, Any] | Any | None = None,
+    runs_per_task: int = 1,
+    base_seed: int = 1729,
+    store: ExperimentStore | None = None,
+    pricing: Mapping[str, Any] | None = None,
+    config: Any | None = None,
+    fixture_data: Mapping[str, Any] | None = None,
+) -> PromotionDecision:
+    """Evaluate parent and candidate on validation tasks, then apply the verdict.
+
+    The task selection happens before either condition is evaluated, so neither
+    evaluator sees training or test tasks.  The mutation path is intentionally
+    absent: only the independent promotion module receives the two validation
+    summaries and only its decision is passed to the status writer.
+    """
+
+    if isinstance(candidate_skill, CandidateSkill):
+        candidate_name = parent_skill.name
+        candidate_parent = candidate_skill.parent_version
+        candidate_version = candidate_skill.candidate_version
+        candidate_markdown = candidate_skill.candidate_markdown
+    else:
+        candidate_name = candidate_skill.name
+        candidate_parent = candidate_skill.parent
+        candidate_version = candidate_skill.version
+        candidate_markdown = candidate_skill.markdown
+        if candidate_skill.name != parent_skill.name:
+            raise ValueError("parent and candidate skills must have the same name")
+    if candidate_parent != parent_skill.version:
+        raise ValueError("candidate skill parent does not match the evaluated parent")
+    resolved_skills_root = skills_root
+    if resolved_skills_root is None:
+        resolved_skills_root = _config_value(config, "skills_root")
+    if resolved_skills_root is None:
+        raise TypeError("skills_root or config.skills_root is required")
+
+    validation_tasks = tasks_for_split(list(tasks), Split.VALIDATION)
+    parent_collector = _RunCollector(store)
+    parent_summary = evaluate_condition(
+        tasks=validation_tasks,
+        fixtures=fixtures,
+        model=model,
+        agent_config=agent_config,
+        experiment_id=experiment_id,
+        split=Split.VALIDATION,
+        condition_name=Condition.SEED,
+        runs_per_task=runs_per_task,
+        base_seed=base_seed,
+        store=parent_collector,
+        skill_markdown=parent_skill.markdown,
+        skill_version=parent_skill.version,
+        pricing=pricing,
+        config=config,
+        fixture_data=fixture_data,
+    )
+
+    candidate_collector = _RunCollector(store)
+    candidate_summary = evaluate_condition(
+        tasks=validation_tasks,
+        fixtures=fixtures,
+        model=model,
+        agent_config=agent_config,
+        experiment_id=experiment_id,
+        split=Split.VALIDATION,
+        condition_name=Condition.EVOLVED_VERIFIED,
+        runs_per_task=runs_per_task,
+        base_seed=base_seed,
+        store=candidate_collector,
+        skill_markdown=candidate_markdown,
+        skill_version=candidate_version,
+        pricing=pricing,
+        parent_runs=parent_collector.runs,
+        config=config,
+        fixture_data=fixture_data,
+    )
+
+    if policy is None:
+        policy = _config_value(config, "promotion")
+    if policy is None:
+        raise TypeError("policy or config.promotion is required")
+
+    decision = decide_promotion(parent_summary, candidate_summary, policy)
+    apply_promotion(resolved_skills_root, candidate_name, decision)
+    return decision
 
 
 def _evaluate_slot(
