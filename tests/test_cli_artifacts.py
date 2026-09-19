@@ -82,6 +82,19 @@ def test_generate_example_cli(tmp_path: Path, monkeypatch: object) -> None:
     assert payload["experiment_id"] == "exp-20000101T000000Z-deadbeef"
 
 
+def test_artifact_manifest_covers_written_files(tmp_path: Path) -> None:
+    output, _config_path = _run_ablation(tmp_path)
+
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    written = {
+        path.relative_to(output).as_posix()
+        for path in output.rglob("*")
+        if path.is_file() and path.relative_to(output).as_posix() != "manifest.json"
+    }
+
+    assert set(manifest["files"]) == written
+
+
 def test_rerun_mock_is_byte_identical(tmp_path: Path) -> None:
     output, config = _run_ablation(tmp_path)
     before = _files(output)

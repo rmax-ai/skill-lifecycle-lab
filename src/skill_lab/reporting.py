@@ -35,6 +35,7 @@ RESULT_COLUMNS = (
     "task_id",
     "run_slot",
     "skill_version",
+    "model_id",
     "outcome",
     "success",
     "tool_calls",
@@ -167,6 +168,7 @@ def _run_row(run: RunRecord) -> dict[str, Any]:
         "task_id": run.task_id,
         "run_slot": run.run_slot,
         "skill_version": run.skill_version or "",
+        "model_id": run.model_id or "",
         "outcome": _enum_value(run.outcome),
         "success": int(run.success),
         "tool_calls": len(run.trajectory.tool_calls),
@@ -187,22 +189,9 @@ def _run_row(run: RunRecord) -> dict[str, Any]:
 
 def _run_records(result: ExperimentResult) -> list[RunRecord]:
     records: dict[str, RunRecord] = {}
-    for attribute in (
-        "runs",
-        "run_records",
-        "train_runs",
-        "baseline_runs",
-        "held_out_runs",
-        "test_runs",
-    ):
-        value = _optional_value(result, (attribute,))
-        for candidate in _flatten_records(value):
-            run = (
-                candidate
-                if isinstance(candidate, RunRecord)
-                else RunRecord.model_validate(candidate)
-            )
-            records[run.run_id] = run
+    for candidate in (*result.runs, *result.held_out_runs):
+        run = candidate if isinstance(candidate, RunRecord) else RunRecord.model_validate(candidate)
+        records.setdefault(run.run_id, run)
     return sorted(
         records.values(),
         key=lambda run: (
@@ -251,22 +240,24 @@ def _trajectories_jsonl(result: ExperimentResult) -> str:
 
 
 def _prompts_jsonl(result: ExperimentResult) -> str:
-    supplied = _optional_value(result, ("prompts", "prompt_records"))
-    records = _flatten_records(supplied)
-    lines: list[str] = []
-    for record in records:
-        lines.append(_canonical_line(record))
-    return "".join(f"{line}\n" for line in lines)
+    return "".join(f"{_canonical_line(record)}\n" for record in result.prompt_records)
 
 
 def _write_skill(root: Path, result: ExperimentResult) -> None:
-    skill = result.final_skill
-    skill_dir = root / "skills" / skill.name / skill.version
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    _write_text(skill_dir / "SKILL.md", skill.markdown)
-    _write_json(skill_dir / "metadata.json", skill.metadata.model_dump(mode="json"))
-    if skill.rationale is not None:
-        _write_text(skill_dir / "RATIONALE.md", f"{skill.rationale.rstrip(chr(10))}\n")
+    skills = {
+        (skill.name, skill.version): skill for skill in (*result.skill_versions, result.final_skill)
+    }
+    for skill in sorted(skills.values(), key=_skill_sort_key):
+        skill_dir = root / "skills" / skill.name / skill.version
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        _write_text(skill_dir / "SKILL.md", skill.markdown)
+        _write_json(skill_dir / "metadata.json", skill.metadata.model_dump(mode="json"))
+        if skill.rationale is not None:
+            _write_text(skill_dir / "RATIONALE.md", f"{skill.rationale.rstrip(chr(10))}\n")
+
+
+def _skill_sort_key(skill: Any) -> tuple[str, int, str]:
+    return skill.name, int(skill.version[1:]), skill.version
 
 
 def _write_manifest(root: Path, experiment_id: str) -> None:
@@ -298,8 +289,8 @@ def _report(result: ExperimentResult) -> str:
         GenerationArtifact.from_record(record)
         for record in sorted(result.generations, key=_generation_sort_key)
     ]
-    baselines = _summary_records(result, ("baseline_summaries", "baselines"))
-    held_out = _summary_records(result, ("held_out_summaries", "heldout_summaries"))
+    baselines = _summary_records(result, ("baseline_summaries",))
+    held_out = _summary_records(result, ("held_out_summaries",))
     observed = _summary_records(result, ("train_summaries",))
 
     lines = [
@@ -387,6 +378,7 @@ def _report(result: ExperimentResult) -> str:
         [
             "",
             f"Observed generation records: `{len(generations)}`.",
+            f"Observed prompt records: {len(result.prompt_records)}",
             f"Observed final skill: `{_md(result.final_skill.version)}`.",
             "",
             "## Interpretation/Conclusions",
@@ -395,9 +387,20 @@ def _report(result: ExperimentResult) -> str:
             "and any observed metric.",
             "- A scripted mock result, when present, describes the offline harness and is not "
             "evidence of general model performance.",
-            "- Held-out interpretation is unavailable when no held-out summaries are supplied.",
         ]
     )
+    if held_out:
+        held_out_runs = sum(
+            _integer_value(summary, "run_count", _value(summary, "runs", 0)) for summary in held_out
+        )
+        lines.append(
+            f"- Held-out results include {len(held_out)} observed summary rows "
+            f"covering {held_out_runs} observed runs."
+        )
+    else:
+        lines.append(
+            "- Held-out interpretation is unavailable when no held-out summaries are supplied."
+        )
     return "\n".join(lines) + "\n"
 
 
