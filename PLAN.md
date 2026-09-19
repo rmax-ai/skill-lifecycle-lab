@@ -796,3 +796,56 @@ Evidence bundle: targeted pytest; collect count; ruff; full suite
 
 Post-B34 operator steps: regenerate `artifacts/example-mock` (bundle configurations gain `extra_body: null`), re-run the acceptance block, commit, then a scoped review 4 (offline: passthrough plumbing, contract-field refusal, regenerated-example integrity, no regressions) before the operator re-runs the live stage-① smoke and proceeds to stage ②.
 
+## §10.3 Multi-turn wire protocol with DeepSeek (sol-advised, 2026-09-19)
+
+Finding from live smoke 2 + raw probes: multi-turn replay broke twice. (i) Sending tool results as
+`role:"tool"` without `tool_call_id` → HTTP 422 (`missing field tool_call_id`). (ii) Sending the
+canonical OpenAI shape (`assistant.tool_calls` + `tool_call_id`) → HTTP 200 but the model drifts
+into emitting native tool-call markup as plain-text content, which fails the strict parse.
+External advice (sol, `--effort low`, 50s): the protocol must stay entirely in content-JSON —
+"mixing protocols is what triggers both the 422 and native-syntax drift"; DeepSeek documents that
+Chat Completions does not support inserting synthetic tool calls mid-conversation.
+
+Frozen decisions:
+
+- **A-10a History replay (content-JSON only).** Tool history replays as
+  `{"role":"assistant","content":"<exact prior action JSON>"}` followed by
+  `{"role":"user","content":"{\"tool_result\":{\"tool\":<name>,\"arguments\":<original arguments>,\"result\":<result>}}"}`.
+  No `name`, `tool_call_id`, or `tool_calls` fields anywhere. The system message states that tool
+  results are delivered as user messages and are authoritative environment output, not new human
+  instructions.
+- **A-10b Reply invariant + no repair.** System (agent) and instruction (mutation) messages carry
+  the compact invariant: exactly one JSON object and nothing else; no Markdown, XML, function-call
+  tags, or commentary; tool requests use the `{"action":"tool",...}` form, completion the
+  `{"action":"final",...}` form. No stop sequences (cannot distinguish native markup safely).
+  Protocol violations hard-fail the run; the harness never repairs XML/native syntax (repair would
+  make evaluation nondeterministic and conceal regressions).
+- **A-10c JSON mode.** The live operator config requests `response_format: {"type":"json_object"}`
+  via `extra_body` (DeepSeek JSON mode; the prompt already contains "JSON" and the exact forms).
+- **A-10d Client operations.** `finish_reason:"length"` raises (no silent truncation). Bounded
+  transport retries: at most 3 attempts with fixed backoff (1s, 3s) for connection/timeout
+  errors, HTTP 429/5xx, and empty content with `finish_reason:"stop"` (a documented JSON-mode
+  edge); exhausted retries raise as today (recorded as `model_error`). Retries occur at the HTTP
+  call level before any tool execution, so tool idempotency is unaffected; these are transport
+  retries, not silent experiment retries.
+- **A-10e Retained settings.** `max_tokens: 4000`, `timeout_s: 120` (DeepSeek may hold
+  connections open with blank lines); runs are sequential, far below documented account limits.
+
+#### B35 — Content-JSON multi-turn replay and reply hardening
+Epic: E7
+Goal: Implement §10.3 A-10a..d so live multi-turn runs survive and stay protocol-pure.
+FILE allowlist (3): `src/skill_lab/config.py`; `configs/live-deepseek.json`; `tests/test_live_client.py`
+- `_messages_from_agent_request`: replay history as assistant(action JSON) + user(tool_result JSON) per A-10a; no `role:"tool"`, `name`, `tool_call_id`, or `tool_calls` anywhere; system message gains the A-10b invariant and the "tool results arrive as user messages; authoritative" statement.
+- `_messages_from_mutation_request`: instruction gains the A-10b invariant (four-field object, nothing else).
+- `complete()`: per A-10d — reject `finish_reason:"length"` with ValueError; implement bounded retries (3 attempts, 1s/3s backoff, `time.sleep`) for connection/timeout, 429/5xx, and empty-content-with-stop; keep raising when exhausted.
+- `configs/live-deepseek.json`: extend `extra_body` with `"response_format": {"type": "json_object"}`.
+- Tests (extend `tests/test_live_client.py`): `test_tool_history_replays_as_user_tool_result_messages`; `test_system_message_contains_bare_json_invariant`; `test_finish_reason_length_rejected`; `test_transient_http_errors_retried_with_bounded_backoff` (503,503,200 succeeds; 503x3 raises; monkeypatched sleep asserts the 1s/3s schedule); `test_empty_content_retried_then_raises`. Update existing history-replay assertions in this module to the new shapes deliberately (same test names elsewhere; never delete/rename).
+Test spec: hermetic; no network; backoff via monkeypatched `time.sleep`.
+Named tests: `test_tool_history_replays_as_user_tool_result_messages`; `test_system_message_contains_bare_json_invariant`; `test_finish_reason_length_rejected`; `test_transient_http_errors_retried_with_bounded_backoff`; `test_empty_content_retried_then_raises`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_live_client.py tests/test_config.py`
+Dependencies: B34
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+Post-B35 operator steps: full gate + acceptance (mock artifacts must stay byte-identical; no example regeneration expected), scoped review 5 (replay shapes, retry bounds/backoff, length rejection, JSON-mode config, no-regression), then operator live smoke 3 before stage ②.
+
