@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.ty/
+.direnv/
+
+# Secrets / local config
+.env
+.envrc
+
+# Agent artifacts
+.serena/
+.hermes/
+
+# OS
+.DS_Store
