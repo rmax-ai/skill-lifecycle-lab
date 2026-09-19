@@ -136,6 +136,10 @@ class ExperimentResult(BaseModel):
     generations: list[GenerationRecord]
     final_skill: Skill
     train_summaries: list[EvaluationSummary] = Field(default_factory=list)
+    baseline_summaries: list[EvaluationSummary] = Field(default_factory=list)
+    held_out_summaries: list[EvaluationSummary] = Field(default_factory=list)
+    held_out_runs: list[RunRecord] = Field(default_factory=list)
+    train_vs_held_out_lift: float | None = None
 
     @property
     def current_skill(self) -> Skill:
@@ -155,6 +159,96 @@ class ExperimentResult(BaseModel):
 
         return self.generations
 
+    @property
+    def heldout_summaries(self) -> list[EvaluationSummary]:
+        """Return held-out summaries under the compact spelling."""
+
+        return self.held_out_summaries
+
+    @property
+    def held_out(self) -> list[EvaluationSummary]:
+        """Return held-out summaries under the workflow name."""
+
+        return self.held_out_summaries
+
+    @property
+    def evolution(self) -> ExperimentResult:
+        """Return this branch result for structured ablation consumers."""
+
+        return self
+
+    @property
+    def held_out_lift(self) -> float | None:
+        """Return the final skill lift over the seed on held-out tasks."""
+
+        for summary in self.held_out_summaries:
+            if summary.condition_name in {
+                Condition.EVOLVED_VERIFIED,
+                Condition.EVOLVED_NAIVE,
+            }:
+                return summary.skill_lift
+        return None
+
+    @property
+    def train_vs_heldout_lift(self) -> float | None:
+        """Return the train/held-out lift under the compact spelling."""
+
+        return self.train_vs_held_out_lift
+
+    def __getitem__(self, key: str) -> Any:
+        """Expose common ablation result names without weakening the model schema."""
+
+        if key == "evolution":
+            return self
+        if key in {"held_out", "heldout", "held_out_summaries"}:
+            return self.held_out_summaries
+        if key in {"train_vs_held_out_lift", "train_vs_heldout_lift"}:
+            return self.train_vs_held_out_lift
+        return self.model_dump(mode="json")[key]
+
+
+class AblationResults(dict[str, ExperimentResult]):
+    """The two independently evolved branches and their held-out evidence."""
+
+    def __getitem__(self, key: str) -> Any:
+        """Support the mode branches and grouped evidence aliases."""
+
+        if key in {"held_out", "heldout", "held_out_summaries"}:
+            return self.held_out_summaries
+        if key in {"train_vs_held_out_lift", "train_vs_heldout_lift"}:
+            return self.train_vs_held_out_lift
+        return super().__getitem__(key)
+
+    @property
+    def verified(self) -> ExperimentResult:
+        """Return the verified branch."""
+
+        return self["verified"]
+
+    @property
+    def naive(self) -> ExperimentResult:
+        """Return the naive branch."""
+
+        return self["naive"]
+
+    @property
+    def held_out_summaries(self) -> dict[str, list[EvaluationSummary]]:
+        """Return held-out summaries grouped by evolution mode."""
+
+        return {mode: result.held_out_summaries for mode, result in self.items()}
+
+    @property
+    def train_vs_held_out_lift(self) -> dict[str, float | None]:
+        """Return the observed train-to-held-out lift for each branch."""
+
+        return {mode: result.train_vs_held_out_lift for mode, result in self.items()}
+
+    @property
+    def train_vs_heldout_lift(self) -> dict[str, float | None]:
+        """Return the train-to-held-out lift under the compact spelling."""
+
+        return self.train_vs_held_out_lift
+
 
 class _MutationCaptureModel:
     """Forward one mutation request while retaining its exact model exchange."""
@@ -168,6 +262,43 @@ class _MutationCaptureModel:
         self.request = request
         self.response = self._model.complete(request)
         return self.response
+
+
+class _AblationModel:
+    """Namespace mutation candidate identities while sharing one model."""
+
+    def __init__(self, model: ChatModel, mode: str) -> None:
+        self._model = model
+        self._mode = mode
+        self.model_id = getattr(model, "model_id", None)
+
+    def complete(self, request: dict[str, Any]) -> Any:
+        response = self._model.complete(request)
+        if request.get("kind") != "mutation":
+            return response
+        return self._namespace_candidate(response)
+
+    def _namespace_candidate(self, response: Any) -> Any:
+        content = getattr(response, "content", None)
+        if not isinstance(content, str):
+            return response
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            return response
+        if not isinstance(payload, dict) or not isinstance(payload.get("candidate_id"), str):
+            return response
+        source = {
+            "candidate_id": payload["candidate_id"],
+            "mode": self._mode,
+        }
+        digest = hashlib.sha256(json.dumps(source, sort_keys=True).encode()).hexdigest()[:12]
+        payload["candidate_id"] = f"cand-{digest}"
+        normalized = json.dumps(payload, sort_keys=True)
+        model_copy = getattr(response, "model_copy", None)
+        if callable(model_copy):
+            return model_copy(update={"content": normalized})
+        return response
 
 
 def evaluate_condition(
@@ -195,15 +326,49 @@ def evaluate_condition(
     experiment_store: ExperimentStore | None = None,
     fixture_data: Mapping[str, Any] | None = None,
 ) -> EvaluationSummary:
-    """Evaluate one condition over a non-test split and persist every slot.
+    """Evaluate one condition over a non-test split and persist every slot."""
+
+    return _evaluate_condition(**locals())
+
+
+def _evaluate_condition(
+    tasks: Sequence[Task],
+    fixtures: Mapping[str, Any] | Path | str | None = None,
+    model: ChatModel | None = None,
+    agent_config: AgentConfig | None = None,
+    *,
+    experiment_id: str,
+    split: Split | str = Split.TRAIN,
+    condition_name: Condition | str = Condition.NO_SKILL,
+    runs_per_task: int = 1,
+    base_seed: int = 1729,
+    store: ExperimentStore | None = None,
+    skill_markdown: str | None = None,
+    skill_version: str | None = None,
+    pricing: Mapping[str, Any] | None = None,
+    parent_runs: Sequence[RunRecord] | None = None,
+    no_skill_runs: Sequence[RunRecord] | None = None,
+    condition: Condition | str | None = None,
+    config: Any | None = None,
+    seed: int | None = None,
+    runs: int | None = None,
+    skill: Skill | str | None = None,
+    experiment_store: ExperimentStore | None = None,
+    fixture_data: Mapping[str, Any] | None = None,
+    _allow_test: bool = False,
+) -> EvaluationSummary:
+    """Evaluate one condition and persist every slot.
 
     Each task/slot is run exactly once with seed
     ``base_seed + task_index * 1000 + run_slot``. A fresh tool environment is
     created for each run, and failed runs are inserted before the next slot.
+
+    The test split is reserved for :func:`run_held_out`; its private flag is
+    intentionally not part of the normal evaluation API.
     """
 
     resolved_split = _split_value(split)
-    if resolved_split is Split.TEST:
+    if resolved_split is Split.TEST and not _allow_test:
         raise ValueError("evaluate_condition cannot evaluate the test split")
 
     resolved_config = _resolve_config(config)
@@ -386,6 +551,272 @@ def evaluate_validation_gate(
     return decision
 
 
+def run_held_out(
+    tasks: Sequence[Task],
+    fixtures: Mapping[str, Any] | Path | str | None = None,
+    model: ChatModel | None = None,
+    agent_config: AgentConfig | None = None,
+    *,
+    experiment_id: str | None = None,
+    seed_skill: Skill | None = None,
+    final_skill: Skill | None = None,
+    evolution: ExperimentResult | None = None,
+    evolution_result: ExperimentResult | None = None,
+    mode: str | Condition = "verified",
+    runs_per_task: int = 1,
+    base_seed: int = 1729,
+    store: ExperimentStore | None = None,
+    pricing: Mapping[str, Any] | None = None,
+    config: Any | None = None,
+    fixture_data: Mapping[str, Any] | None = None,
+    run_records: list[RunRecord] | None = None,
+) -> list[EvaluationSummary]:
+    """Evaluate no-skill, seed, and final-skill conditions on test tasks.
+
+    This is the only path that enables the private test-split evaluator.  It
+    resolves all three conditions before running the first test task, and the
+    returned summaries are ordered ``no_skill``, ``seed``, then the evolved
+    mode.  Mutation and promotion never call this function.
+    """
+
+    selected_evolution = evolution_result or evolution
+    if evolution is not None and evolution_result is not None and evolution != evolution_result:
+        raise ValueError("evolution and evolution_result must refer to the same result")
+    if selected_evolution is not None:
+        if experiment_id is None:
+            experiment_id = selected_evolution.experiment_id
+        if final_skill is None:
+            final_skill = selected_evolution.final_skill
+        if mode == "verified":
+            mode = selected_evolution.mode
+    if experiment_id is None:
+        raise TypeError("experiment_id or evolution result is required")
+    if seed_skill is None:
+        raise TypeError("seed_skill is required")
+    if final_skill is None:
+        raise TypeError("final_skill or evolution result is required")
+    if runs_per_task < 1:
+        raise ValueError("runs_per_task must be at least 1")
+
+    resolved_mode = _evolution_mode(mode)
+    resolved_condition = (
+        Condition.EVOLVED_VERIFIED if resolved_mode == "verified" else Condition.EVOLVED_NAIVE
+    )
+    if store is not None:
+        resolved_model = model or _config_model(_resolve_config(config))
+        if resolved_model is None:
+            raise TypeError("model or config.model is required")
+        _ensure_store_experiment(
+            store=store,
+            experiment_id=experiment_id,
+            mode=resolved_mode,
+            model=resolved_model,
+            base_seed=base_seed,
+            runs_per_task=runs_per_task,
+            generations=0,
+        )
+        _ensure_store_skill(store, seed_skill)
+        _ensure_store_skill(store, final_skill)
+
+    test_tasks = tasks_for_split(list(tasks), Split.TEST)
+    no_skill_collector = _RunCollector(store)
+    no_skill_summary = _evaluate_condition(
+        tasks=test_tasks,
+        fixtures=fixtures,
+        model=model,
+        agent_config=agent_config,
+        experiment_id=experiment_id,
+        split=Split.TEST,
+        condition_name=Condition.NO_SKILL,
+        runs_per_task=runs_per_task,
+        base_seed=base_seed,
+        store=no_skill_collector,
+        pricing=pricing,
+        config=config,
+        fixture_data=fixture_data,
+        _allow_test=True,
+    )
+
+    seed_collector = _RunCollector(store)
+    seed_summary = _evaluate_condition(
+        tasks=test_tasks,
+        fixtures=fixtures,
+        model=model,
+        agent_config=agent_config,
+        experiment_id=experiment_id,
+        split=Split.TEST,
+        condition_name=Condition.SEED,
+        runs_per_task=runs_per_task,
+        base_seed=base_seed,
+        store=seed_collector,
+        skill_markdown=seed_skill.markdown,
+        skill_version=seed_skill.version,
+        pricing=pricing,
+        no_skill_runs=no_skill_collector.runs,
+        config=config,
+        fixture_data=fixture_data,
+        _allow_test=True,
+    )
+
+    final_collector = _RunCollector(store)
+    final_summary = _evaluate_condition(
+        tasks=test_tasks,
+        fixtures=fixtures,
+        model=model,
+        agent_config=agent_config,
+        experiment_id=experiment_id,
+        split=Split.TEST,
+        condition_name=resolved_condition,
+        runs_per_task=runs_per_task,
+        base_seed=base_seed,
+        store=final_collector,
+        skill_markdown=final_skill.markdown,
+        skill_version=final_skill.version,
+        pricing=pricing,
+        parent_runs=seed_collector.runs,
+        no_skill_runs=no_skill_collector.runs,
+        config=config,
+        fixture_data=fixture_data,
+        _allow_test=True,
+    )
+    if run_records is not None:
+        run_records.extend(no_skill_collector.runs)
+        run_records.extend(seed_collector.runs)
+        run_records.extend(final_collector.runs)
+    return [no_skill_summary, seed_summary, final_summary]
+
+
+def ablate(
+    tasks: Sequence[Task],
+    fixtures: Mapping[str, Any] | Path | str | None = None,
+    model: ChatModel | None = None,
+    agent_config: AgentConfig | None = None,
+    *,
+    experiment_id: str,
+    generations: int = 1,
+    runs_per_task: int = 1,
+    parent_skill: Skill | None = None,
+    seed_skill: Skill | None = None,
+    initial_skill: Skill | None = None,
+    skill: Skill | str | None = None,
+    skill_name: str | None = None,
+    skill_version: str = "v001",
+    skills_root: Path | str | None = None,
+    verified_root: Path | str | None = None,
+    naive_root: Path | str | None = None,
+    policy: PromotionPolicy | Mapping[str, Any] | Any | None = None,
+    base_seed: int = 1729,
+    store: ExperimentStore | None = None,
+    pricing: Mapping[str, Any] | None = None,
+    config: Any | None = None,
+    mutation_config: MutationConfig | Mapping[str, Any] | None = None,
+    fixture_data: Mapping[str, Any] | None = None,
+    seed: int | None = None,
+    runs: int | None = None,
+    experiment_store: ExperimentStore | None = None,
+) -> AblationResults:
+    """Run independent verified and naive evolutions, then test both finals.
+
+    The two branches receive the same task corpus, model controls, seed skill,
+    and mutation configuration, but write candidates below separate roots.
+    Test tasks are selected only after both calls to :func:`evolve` return.
+    """
+
+    if experiment_store is not None:
+        if store is not None and store is not experiment_store:
+            raise ValueError("store and experiment_store must refer to the same store")
+        store = experiment_store
+    if seed is not None:
+        base_seed = seed
+    if runs is not None:
+        runs_per_task = runs
+    if runs_per_task < 1:
+        raise ValueError("runs_per_task must be at least 1")
+
+    resolved_root_value = skills_root or _config_value(_resolve_config(config), "skills_root")
+    resolved_root = (
+        Path(resolved_root_value).expanduser() if resolved_root_value is not None else None
+    )
+    if resolved_root is None:
+        raise TypeError("skills_root or config.skills_root is required")
+    resolved_seed = seed_skill or parent_skill or initial_skill
+    if resolved_seed is None and isinstance(skill, Skill):
+        resolved_seed = skill
+    if resolved_seed is None:
+        resolved_seed = load_skill(
+            resolved_root,
+            skill if isinstance(skill, str) else (skill_name or "incident-response"),
+            skill_version,
+        )
+
+    verified_skills_root = (
+        Path(verified_root).expanduser()
+        if verified_root is not None
+        else resolved_root / "verified"
+    )
+    naive_skills_root = (
+        Path(naive_root).expanduser() if naive_root is not None else resolved_root / "naive"
+    )
+
+    branch_ids = {
+        "verified": _ablation_experiment_id(experiment_id, "verified") if store else experiment_id,
+        "naive": _ablation_experiment_id(experiment_id, "naive") if store else experiment_id,
+    }
+    resolved_model = model or _config_model(_resolve_config(config))
+    results: dict[str, ExperimentResult] = {}
+    for mode, root in (
+        ("verified", verified_skills_root),
+        ("naive", naive_skills_root),
+    ):
+        branch_model = _AblationModel(resolved_model, mode) if resolved_model is not None else None
+        results[mode] = evolve(
+            tasks=tasks,
+            fixtures=fixtures,
+            model=branch_model,
+            agent_config=agent_config,
+            experiment_id=branch_ids[mode],
+            mode=mode,
+            generations=generations,
+            runs_per_task=runs_per_task,
+            parent_skill=resolved_seed,
+            skills_root=root,
+            policy=policy,
+            base_seed=base_seed,
+            store=store,
+            pricing=pricing,
+            config=config,
+            mutation_config=mutation_config,
+            fixture_data=fixture_data,
+        )
+
+    for mode, result in tuple(results.items()):
+        held_out_runs: list[RunRecord] = []
+        held_out = run_held_out(
+            tasks=tasks,
+            fixtures=fixtures,
+            model=model,
+            agent_config=agent_config,
+            experiment_id=result.experiment_id,
+            seed_skill=resolved_seed,
+            final_skill=result.final_skill,
+            mode=mode,
+            runs_per_task=runs_per_task,
+            base_seed=base_seed,
+            store=store,
+            pricing=pricing,
+            config=config,
+            fixture_data=fixture_data,
+            run_records=held_out_runs,
+        )
+        results[mode] = _with_held_out(
+            result,
+            summaries=held_out,
+            runs=held_out_runs,
+        )
+
+    return AblationResults(results)
+
+
 def evolve(
     tasks: Sequence[Task],
     fixtures: Mapping[str, Any] | Path | str | None = None,
@@ -485,7 +916,8 @@ def evolve(
         skill_version=skill_version,
         skills_root=resolved_root,
     )
-    train_tasks = tasks_for_split(list(tasks), Split.TRAIN)
+    evolution_tasks = [task for task in tasks if _split_value(task.split) is not Split.TEST]
+    train_tasks = tasks_for_split(evolution_tasks, Split.TRAIN)
     resolved_task_inputs = (
         dict(task_inputs)
         if task_inputs is not None
@@ -642,7 +1074,7 @@ def evolve(
 
         try:
             decision = evaluate_validation_gate(
-                tasks=tasks,
+                tasks=evolution_tasks,
                 fixtures=fixtures,
                 model=resolved_model,
                 agent_config=resolved_agent_config,
@@ -734,6 +1166,38 @@ def _evolution_mode(mode: str | Condition) -> Literal["verified", "naive"]:
     if value in {"naive", Condition.EVOLVED_NAIVE.value}:
         return "naive"
     raise ValueError("mode must be 'verified' or 'naive'")
+
+
+def _with_held_out(
+    result: ExperimentResult,
+    *,
+    summaries: Sequence[EvaluationSummary],
+    runs: Sequence[RunRecord],
+) -> ExperimentResult:
+    """Attach final test evidence while retaining the immutable evolution result."""
+
+    ordered_summaries = list(summaries)
+    final_train = result.train_summaries[-1] if result.train_summaries else None
+    final_test = ordered_summaries[-1] if ordered_summaries else None
+    train_vs_held_out_lift = None
+    if final_train is not None and final_test is not None:
+        train_vs_held_out_lift = final_test.success_rate - final_train.success_rate
+    return result.model_copy(
+        update={
+            "baseline_summaries": ordered_summaries[:2],
+            "held_out_summaries": ordered_summaries,
+            "held_out_runs": list(runs),
+            "train_vs_held_out_lift": train_vs_held_out_lift,
+        }
+    )
+
+
+def _ablation_experiment_id(experiment_id: str, mode: str) -> str:
+    """Derive a stable branch ID without introducing time or random entropy."""
+
+    digest = hashlib.sha256(f"{experiment_id}:{mode}".encode()).hexdigest()[:8]
+    prefix = experiment_id.rsplit("-", 1)[0]
+    return f"{prefix}-{digest}"
 
 
 def _resolve_evolution_skill(
