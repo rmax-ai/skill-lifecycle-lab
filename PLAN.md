@@ -734,3 +734,41 @@ Evidence bundle: targeted pytest; collect count; ruff; full suite
 
 After B31: regenerate `artifacts/example-mock` from the fixed code (`generate-example`), run the §5 acceptance block on the regenerated tree, commit, then run integrity review 2 on the new commit before any live spend. The regenerated example must show non-empty `prompts.jsonl`, all lineage versions, frozen `inputs/`, and the byte-identical rerun contract intact.
 
+## §10.1 Review-2 residuals (2026-09-19)
+
+Integrity review 2 (`docs/reviews/integrity-review-2.md`, run on `8475a0a`) returned FIX-FIRST with three residual majors and no blockers; findings 2, 3, 5, 6, 7, 9 were verified fixed, findings 1, 4, 8 partially fixed. Additional frozen clarifications, then cards B32–B33 (epic E7):
+
+- **A-1a Kind semantics.** The kindless prebuilt-messages path remains the only compatibility route: `kind is None` with a valid non-empty `messages` list is accepted; an explicitly present kind other than `agent`/`mutation` raises ValueError even when messages are supplied.
+- **A-3a Observed model strictness.** The observed `model_id` is never substituted: the live client reports the provider's `model` field or None (no configured-model fallback), and the usage collector reads only the response value (no `model.model_id`/`config.model` fallbacks). `ModelResponse.model` is `str | None`.
+- **A-2a Error-path accounting.** When a response is rejected for an inconsistent `total_tokens`, the call is still accounted before the run fails: steps, tokens (derived from components, never the supplied total), and latency are recorded, the assistant message is retained, and the run outcome is MODEL_ERROR. Best-effort salvage applies to responses whose token fields are invalid. Invariant: every persisted run satisfies `total_tokens == input_tokens + output_tokens`.
+
+#### B32 — Strict live dispatch and observed-model honesty
+Epic: E7
+Goal: Close review-2 findings 1–2: no unknown-kind bypass; never substitute the requested model for an absent observed one.
+FILE allowlist (3): `src/skill_lab/config.py`; `src/skill_lab/mock_model.py`; `tests/test_live_client.py`
+- Implement §10.1 A-1a: `_request_body` accepts the kindless prebuilt-messages path only when `kind` is absent; an explicit unknown kind raises ValueError regardless of `messages` presence. (Review repro: `{"kind":"bogus","messages":[...]}` must raise; `{"kind":None,"messages":[...]}` may pass; empty messages keep raising.)
+- Implement §10.1 A-3a client side: `ModelResponse.model` becomes `str | None` (default None); `complete()` records the provider payload's non-empty `model` string or None — never `self.config.model`. The mock keeps setting its explicit id in every response; adjust constructors/tests that relied on the old default deliberately (never weaken the no-substitution rule).
+- Tests extend `tests/test_live_client.py`: `test_unknown_kind_raises_even_with_messages`; `test_kindless_prebuilt_messages_still_supported`; `test_absent_provider_model_is_none_not_requested`.
+Test spec: hermetic stub transports; no network.
+Named tests: `test_unknown_kind_raises_even_with_messages`; `test_kindless_prebuilt_messages_still_supported`; `test_absent_provider_model_is_none_not_requested`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_live_client.py tests/test_mock_model.py`
+Dependencies: B31
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+#### B33 — Collected-model strictness and error-path accounting
+Epic: E7
+Goal: Close review-2 findings 2 (collector) and 3: usage collector never substitutes; rejected responses stay consistently accounted with latency.
+FILE allowlist (3): `src/skill_lab/agent.py`; `src/skill_lab/experiment.py`; `tests/test_usage_accounting.py`
+- Implement §10.1 A-3a collector side: `_usage_from_response` reads only the response `model` value (non-empty string else None); remove the `model.model_id` and `config.model` fallback branches.
+- Implement §10.1 A-2a: in `run_agent`, a `total_tokens` mismatch is detected via an internal lenient extractor (the existing `_response_values` keeps its raising contract for direct callers). On mismatch: account the call (steps += 1; trajectory totals += input+output from components; generated += output; latency += response latency), retain the assistant message, set outcome MODEL_ERROR, and stop. On extraction exceptions, salvage the response's numerically valid token/latency fields (0 for invalid, matching the usage wrapper's tolerance) before failing, so the aggregate invariant holds on every path.
+- Tests extend `tests/test_usage_accounting.py`: `test_rejected_total_mismatch_run_accounts_call` (in=2, out=3, total=99, latency=4 → MODEL_ERROR with trajectory tokens 5 and latency 4; persisted-record aggregation satisfies total == input+output); `test_error_path_records_stay_consistent` (invalid total field / structural failure → consistent record). Keep `test_total_tokens_must_equal_components` semantics for the direct extractor; update any test that relied on the removed fallbacks to use an explicit response model id.
+Test spec: hermetic; mock behaviors unchanged on normal paths.
+Named tests: `test_rejected_total_mismatch_run_accounts_call`; `test_error_path_records_stay_consistent`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_usage_accounting.py tests/test_agent.py`
+Dependencies: B32
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+Post-B33: full acceptance block + committed example regeneration if contents change, then integrity review 3 (scoped to the three residuals + regression) gates the live spend.
+
