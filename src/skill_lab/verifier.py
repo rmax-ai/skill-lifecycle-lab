@@ -89,7 +89,7 @@ def verify(task: Task, trajectory: Trajectory) -> VerificationResult:
         "no_tool_errors": all(not _is_error(call) for _, call in indexed_calls),
         "no_unnecessary_actions": len(trajectory.tool_calls) <= task.max_calls,
     }
-    invariant_results = _invariant_results(task, checks, call_indexes)
+    invariant_results = _invariant_results(task, checks, successful_indexes)
     checks["invariants_satisfied"] = all(invariant_results.values())
 
     evidence = {
@@ -261,19 +261,21 @@ def _is_error(call: ToolCall) -> bool:
 def _invariant_results(
     task: Task,
     checks: dict[str, bool],
-    call_indexes: dict[str, list[int]],
+    successful_indexes: dict[str, list[int]],
 ) -> dict[str, bool]:
     results: dict[str, bool] = {}
     for invariant in task.invariants:
         if invariant in {"approval_before_escalation", "update_after_escalation"}:
             results[invariant] = checks["ordering"]
         elif invariant == "correct_escalation":
-            results[invariant] = checks["correct_escalation_path"] and all(
-                call_indexes.get(tool, []) for tool in _INVARIANT_TO_TOOLS[invariant]
+            results[invariant] = (
+                checks["correct_escalation_path"]
+                and checks["no_forbidden_actions"]
+                and all(successful_indexes.get(tool, []) for tool in _INVARIANT_TO_TOOLS[invariant])
             )
         elif invariant in _INVARIANT_TO_TOOLS:
             results[invariant] = all(
-                call_indexes.get(tool, []) for tool in _INVARIANT_TO_TOOLS[invariant]
+                successful_indexes.get(tool, []) for tool in _INVARIANT_TO_TOOLS[invariant]
             )
         elif invariant == "evidence_complete":
             results[invariant] = checks["required_evidence"]
