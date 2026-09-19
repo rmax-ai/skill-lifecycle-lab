@@ -849,3 +849,33 @@ Evidence bundle: targeted pytest; collect count; ruff; full suite
 
 Post-B35 operator steps: full gate + acceptance (mock artifacts must stay byte-identical; no example regeneration expected), scoped review 5 (replay shapes, retry bounds/backoff, length rejection, JSON-mode config, no-regression), then operator live smoke 3 before stage ②.
 
+## §10.4 Retry latency accounting (review-5 fix, 2026-09-19)
+
+Review 5 (`docs/reviews/integrity-review-5.md`) passed every §10.3 protocol check but found one
+major: `complete()` resets `started_at` inside the retry loop, so a call that succeeds after
+retries records only the final attempt's latency (observed 4,000 ms vs 9,000 ms attempt-time /
+16,000 ms wall span), systematically low precisely when retries fire — weakening the
+latency/cost-of-improvement measurement.
+
+Frozen semantics:
+
+- **A-10f Latency span.** `latency_ms` measures wall time from the FIRST attempt's start to the
+  successful response decode, including every retry attempt and all inter-attempt backoff
+  sleep. Failures after exhausted retries raise (latency not persisted, as before). This is the
+  full cost of obtaining the response; retries are rare, so the span is the honest total.
+
+#### B36 — Retry latency span
+Epic: E7
+Goal: Record the full retry span in `latency_ms` per §10.4 A-10f.
+FILE allowlist (2): `src/skill_lab/config.py`; `tests/test_live_client.py`
+- `complete()`: time from the first attempt start to the successful response decode (single `started_at` before the attempt loop; compute once on success). No behavior change on the no-retry path.
+- Tests extend `tests/test_live_client.py`: `test_retry_latency_includes_all_attempts_and_backoff` — reproduce review 5's shape (503,503,200; attempt durations 2s/3s/4s; no-op sleeps with monkeypatched clocks) and assert `latency_ms` equals the full span (16,000 ms in that construction), not the final attempt (4,000 ms); plus an assertion that the no-retry path still reports a single-attempt span.
+Test spec: hermetic; monkeypatched clocks/sleeps; no network.
+Named tests: `test_retry_latency_includes_all_attempts_and_backoff`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_live_client.py`
+Dependencies: B35
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+Post-B36 operator steps: gate + acceptance (mock rerun byte-identical), review 6 (scoped: reproduce finding 1 exactly → PASS expected, suite, no regression), then operator live smoke 3.
+
