@@ -15,34 +15,35 @@ from pydantic import BaseModel
 from skill_lab.models import CandidateSkill, PromotionDecision, RunRecord
 
 DDL = """PRAGMA foreign_keys = ON;
-CREATE TABLE experiments (
+CREATE TABLE IF NOT EXISTS experiments (
   experiment_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, mode TEXT NOT NULL,
   config_json TEXT NOT NULL, git_commit TEXT NOT NULL, dataset_sha256 TEXT NOT NULL,
   model_id TEXT NOT NULL, seed INTEGER NOT NULL, runs_per_task INTEGER NOT NULL,
   status TEXT NOT NULL, error_text TEXT
 );
-CREATE TABLE skills (
+CREATE TABLE IF NOT EXISTS skills (
   version TEXT PRIMARY KEY, name TEXT NOT NULL, parent_version TEXT,
   generation INTEGER NOT NULL, created_by TEXT NOT NULL, status TEXT NOT NULL,
   skill_markdown TEXT NOT NULL, metadata_json TEXT NOT NULL, created_at TEXT NOT NULL
 );
-CREATE TABLE mutations (
+CREATE TABLE IF NOT EXISTS mutations (
   candidate_id TEXT PRIMARY KEY, experiment_id TEXT NOT NULL REFERENCES experiments(experiment_id),
   parent_version TEXT NOT NULL REFERENCES skills(version), candidate_version TEXT NOT NULL,
   generation INTEGER NOT NULL, status TEXT NOT NULL, prompt_json TEXT NOT NULL,
   response_json TEXT NOT NULL, failure_analysis TEXT NOT NULL, procedural_change TEXT NOT NULL,
   rationale TEXT NOT NULL, candidate_markdown TEXT NOT NULL, error_text TEXT
 );
-CREATE TABLE runs (
+CREATE TABLE IF NOT EXISTS runs (
   run_id TEXT PRIMARY KEY, experiment_id TEXT NOT NULL REFERENCES experiments(experiment_id),
   task_id TEXT NOT NULL, split TEXT NOT NULL, condition_name TEXT NOT NULL, skill_version TEXT,
+  model_id TEXT,
   run_slot INTEGER NOT NULL, seed INTEGER NOT NULL, outcome TEXT NOT NULL,
   success INTEGER NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
   total_tokens INTEGER NOT NULL, latency_ms INTEGER NOT NULL, estimated_cost_usd REAL NOT NULL,
   trajectory_json TEXT NOT NULL, verification_json TEXT NOT NULL, error_text TEXT,
   UNIQUE(experiment_id, task_id, condition_name, skill_version, run_slot)
 );
-CREATE TABLE promotion_decisions (
+CREATE TABLE IF NOT EXISTS promotion_decisions (
   decision_id TEXT PRIMARY KEY, experiment_id TEXT NOT NULL REFERENCES experiments(experiment_id),
   candidate_id TEXT NOT NULL REFERENCES mutations(candidate_id), parent_version TEXT NOT NULL,
   candidate_version TEXT NOT NULL, decision TEXT NOT NULL, reason_codes_json TEXT NOT NULL,
@@ -204,10 +205,10 @@ class ExperimentStore:
                 """
                 INSERT INTO runs (
                     run_id, experiment_id, task_id, split, condition_name, skill_version,
-                    run_slot, seed, outcome, success, input_tokens, output_tokens,
+                    model_id, run_slot, seed, outcome, success, input_tokens, output_tokens,
                     total_tokens, latency_ms, estimated_cost_usd, trajectory_json,
                     verification_json, error_text
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_data["run_id"],
@@ -216,6 +217,7 @@ class ExperimentStore:
                     run_data["split"],
                     run_data["condition_name"],
                     run_data["skill_version"],
+                    run_data["model_id"],
                     run_data["run_slot"],
                     run_data["seed"],
                     run_data["outcome"],
@@ -305,6 +307,10 @@ class ExperimentStore:
             return
         if existing != _TABLES:
             raise sqlite3.DatabaseError("database does not match the experiment schema")
+        run_columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(runs)")}
+        if "model_id" not in run_columns:
+            self._connection.execute("ALTER TABLE runs ADD COLUMN model_id TEXT")
+            self._connection.commit()
 
 
 def _expanded(path: Path | str) -> Path:

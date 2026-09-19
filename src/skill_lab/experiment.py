@@ -1467,6 +1467,10 @@ def _evaluate_slot(
     success = trajectory.outcome is Outcome.SUCCESS and verification.success
     input_tokens = sum(usage.input_tokens for usage in capturing_model.usages)
     output_tokens = sum(usage.output_tokens for usage in capturing_model.usages)
+    model_ids = sorted(
+        {usage.model_id for usage in capturing_model.usages if usage.model_id is not None}
+    )
+    model_id = "|".join(model_ids) or None
     estimated_cost = sum(
         estimate_cost(
             usage.input_tokens,
@@ -1484,6 +1488,7 @@ def _evaluate_slot(
         split=split,
         condition_name=condition,
         skill_version=skill_version,
+        model_id=model_id,
         run_slot=run_slot,
         seed=seed,
         outcome=trajectory.outcome,

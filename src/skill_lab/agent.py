@@ -190,11 +190,13 @@ def _response_values(response: Any) -> tuple[str, int, int, int, int]:
     input_tokens = _response_integer(response, "input_tokens")
     output_tokens = _response_integer(response, "output_tokens")
     total_value = _response_field(response, "total_tokens")
-    total_tokens = (
-        input_tokens + output_tokens
-        if total_value is _MISSING or total_value is None
-        else _as_nonnegative_integer(total_value, "total_tokens")
-    )
+    if total_value is _MISSING:
+        total_tokens = input_tokens + output_tokens
+    else:
+        total_tokens = _as_nonnegative_integer(total_value, "total_tokens")
+        expected_total = input_tokens + output_tokens
+        if total_tokens != expected_total:
+            raise ValueError("model response total_tokens must equal input_tokens + output_tokens")
     latency_ms = _response_integer(response, "latency_ms")
     return content, input_tokens, output_tokens, total_tokens, latency_ms
 

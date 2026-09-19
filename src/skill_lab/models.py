@@ -128,6 +128,7 @@ class RunRecord(FrozenModel):
     split: Split
     condition_name: Condition
     skill_version: Version | None
+    model_id: str | None = None
     run_slot: int = Field(ge=0)
     seed: int
     outcome: Outcome

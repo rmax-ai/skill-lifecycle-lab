@@ -129,6 +129,7 @@ def test_schema_matches_contract(tmp_path: Path) -> None:
                 "split",
                 "condition_name",
                 "skill_version",
+                "model_id",
                 "run_slot",
                 "seed",
                 "outcome",
