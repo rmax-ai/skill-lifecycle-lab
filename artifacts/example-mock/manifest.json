@@ -3,8 +3,8 @@
   "experiment_id": "exp-20000101T000000Z-deadbeef",
   "files": {
     "config.json": {
-      "sha256": "a6ed619f73dc74c5ee1039ab00912fbf7b321bb8261595a84e9df9b22eae47a2",
-      "size": 1772
+      "sha256": "f09e9823e95d14a9624167fba3dc391aa000c86bc16a915ec3fb35910029bbeb",
+      "size": 1798
     },
     "generations.json": {
       "sha256": "32e2d2c67db49ea1b644cd831e8e08c02f279898ce590e5479f6c526b9b347fd",
