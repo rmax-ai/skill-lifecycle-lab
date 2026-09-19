@@ -57,7 +57,7 @@ class ModelResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    model: str = _MODEL_ID
+    model: str | None = None
     content: str
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)

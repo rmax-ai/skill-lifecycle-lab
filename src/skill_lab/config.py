@@ -208,7 +208,7 @@ class OpenAICompatibleClient:
         total_tokens = _usage_integer(usage, "total_tokens", input_tokens + output_tokens)
         model = payload.get("model")
         if not isinstance(model, str) or not model:
-            model = self.config.model
+            model = None
         finish_reason = choice.get("finish_reason")
         if not isinstance(finish_reason, str) or not finish_reason:
             finish_reason = "stop"
@@ -240,11 +240,13 @@ class OpenAICompatibleClient:
             messages = _messages_from_agent_request(request)
         elif kind == "mutation":
             messages = _messages_from_mutation_request(request)
-        else:
+        elif kind is None:
             messages = request.get("messages")
             if not isinstance(messages, list):
                 raise ValueError("request must have kind='agent', kind='mutation', or messages")
             messages = _validated_messages(messages)
+        else:
+            raise ValueError("request kind must be 'agent', 'mutation', or absent")
         return {
             "model": self.config.model,
             "messages": messages,

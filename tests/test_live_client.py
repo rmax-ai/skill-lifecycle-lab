@@ -7,12 +7,14 @@ from skill_lab.config import ModelConfig, OpenAICompatibleClient
 
 
 class _StubResponse:
+    def __init__(self, model: str | None = "live-placeholder") -> None:
+        self.model = model
+
     def raise_for_status(self) -> None:
         return None
 
     def json(self) -> dict[str, Any]:
-        return {
-            "model": "live-placeholder",
+        payload: dict[str, Any] = {
             "choices": [
                 {
                     "message": {"content": '{"action":"final","output":{}}'},
@@ -25,15 +27,19 @@ class _StubResponse:
                 "total_tokens": 7,
             },
         }
+        if self.model is not None:
+            payload["model"] = self.model
+        return payload
 
 
 class _StubClient:
-    def __init__(self) -> None:
+    def __init__(self, *, model: str | None = "live-placeholder") -> None:
         self.posts: list[dict[str, Any]] = []
+        self.model = model
 
     def post(self, url: str, *, json: dict[str, Any]) -> _StubResponse:
         self.posts.append({"url": url, "json": json})
-        return _StubResponse()
+        return _StubResponse(self.model)
 
     def close(self) -> None:
         return None
@@ -183,6 +189,34 @@ def test_unknown_request_kind_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="kind"):
         client._request_body({"kind": "unknown"})
+
+
+def test_unknown_kind_raises_even_with_messages() -> None:
+    client = _client()
+
+    with pytest.raises(ValueError, match="kind"):
+        client._request_body(
+            {
+                "kind": "bogus",
+                "messages": [{"role": "user", "content": "placeholder request"}],
+            }
+        )
+
+
+def test_kindless_prebuilt_messages_still_supported() -> None:
+    client = _client()
+    messages = [{"role": "user", "content": "placeholder request"}]
+
+    assert client._request_body({"messages": messages})["messages"] == messages
+    assert client._request_body({"kind": None, "messages": messages})["messages"] == messages
+
+
+def test_absent_provider_model_is_none_not_requested() -> None:
+    client = _client(_StubClient(model=None))
+
+    response = client.complete({"messages": [{"role": "user", "content": "placeholder request"}]})
+
+    assert response.model is None
 
 
 def test_latency_is_measured_with_monotonic_clock(monkeypatch: pytest.MonkeyPatch) -> None:
