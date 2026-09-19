@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import os
 import tempfile
@@ -19,10 +21,11 @@ from skill_lab.experiment import (
     ExperimentResult,
     _RunCollector,
     evaluate_condition,
+    run_held_out,
 )
 from skill_lab.experiment import ablate as run_ablation
 from skill_lab.experiment import evolve as run_evolution
-from skill_lab.models import Split
+from skill_lab.models import RunRecord, Split
 from skill_lab.reporting import write_artifact, write_runs_files
 from skill_lab.skills import Skill, load_skill
 from skill_lab.storage import ExperimentStore
@@ -211,6 +214,136 @@ def report(
     typer.echo(report_path.read_text(encoding="utf-8").rstrip("\n"))
 
 
+@app.command("held-out")
+def held_out(
+    experiment: Annotated[Path, typer.Option("--experiment")],
+    runs_per_task: Annotated[int, typer.Option("--runs-per-task", min=1)] = 1,
+    allow_live: Annotated[bool, typer.Option("--allow-live")] = False,
+) -> None:
+    """Evaluate a durable bundle's untouched test set in an additive subtree.
+
+    The parent bundle is never rewritten.  ``held-out/`` is an additive zone
+    intentionally excluded by parent manifest verification and tree reruns.
+    """
+
+    experiment_path = _expanded(experiment)
+    payload = _read_json(experiment_path / "config.json")
+
+    artifact_kind = payload.get("artifact_kind")
+    if artifact_kind not in {"ablation", "evolution"}:
+        typer.echo("artifact config has unsupported artifact kind", err=True)
+        raise typer.Exit(code=2)
+    _verify_manifest(experiment_path)
+
+    configuration = payload.get("configuration")
+    if not isinstance(configuration, Mapping):
+        typer.echo("artifact config does not contain configuration", err=True)
+        raise typer.Exit(code=1)
+    try:
+        settings = AppConfig.model_validate(configuration)
+    except Exception as error:
+        typer.echo(f"invalid artifact configuration: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    if settings.model.provider == "openai_compatible" and not allow_live:
+        typer.echo("live held-out evaluation requires --allow-live", err=True)
+        raise typer.Exit(code=1)
+
+    command = payload.get("command")
+    branches = payload.get("branches")
+    if not isinstance(command, Mapping) or not isinstance(branches, Mapping):
+        typer.echo("artifact config has invalid held-out branches", err=True)
+        raise typer.Exit(code=1)
+    skill_name = command.get("skill")
+    parent_experiment_id = payload.get("experiment_id")
+    if not isinstance(skill_name, str) or not isinstance(parent_experiment_id, str):
+        typer.echo("artifact config has invalid held-out identity", err=True)
+        raise typer.Exit(code=1)
+
+    branch_specs: list[tuple[str, Mapping[str, object], str]] = []
+    for mode, branch_value in sorted(branches.items(), key=lambda item: str(item[0])):
+        if not isinstance(mode, str) or mode not in {"verified", "naive"}:
+            typer.echo("artifact config has invalid held-out mode", err=True)
+            raise typer.Exit(code=1)
+        if not isinstance(branch_value, Mapping):
+            typer.echo("artifact config has invalid held-out branch", err=True)
+            raise typer.Exit(code=1)
+        final_version = branch_value.get("final_version")
+        branch_experiment_id = branch_value.get("experiment_id", parent_experiment_id)
+        if not isinstance(final_version, str) or not isinstance(branch_experiment_id, str):
+            typer.echo("artifact config has invalid held-out branch identity", err=True)
+            raise typer.Exit(code=1)
+        branch_specs.append((mode, branch_value, branch_experiment_id))
+
+    frozen_inputs = _verify_frozen_inputs(experiment_path, payload)
+    tasks = load_tasks(frozen_inputs.get("dataset", settings.dataset_path))
+    fixtures = frozen_inputs.get("fixtures", settings.fixtures_path)
+    branch_outputs: dict[str, dict[str, object]] = {}
+    branch_runs: dict[str, list[RunRecord]] = {}
+    branch_skills: dict[str, tuple[Skill, Skill, str]] = {}
+    for mode, branch, branch_experiment_id in branch_specs:
+        try:
+            branch_path = _bundle_branch_path(experiment_path, branch.get("path", "."))
+            seed_skill = load_skill(branch_path / "skills", skill_name, "v001")
+            final_skill = load_skill(
+                branch_path / "skills",
+                skill_name,
+                str(branch["final_version"]),
+            )
+        except (KeyError, OSError, ValueError) as error:
+            typer.echo(f"bundle skill is not readable: {error}", err=True)
+            raise typer.Exit(code=1) from error
+        branch_skills[mode] = (seed_skill, final_skill, branch_experiment_id)
+
+    model = create_chat_model(settings, allow_live=allow_live, env=os.environ)
+    try:
+        for mode in sorted(branch_skills):
+            seed_skill, final_skill, branch_experiment_id = branch_skills[mode]
+            branch_id = _held_out_experiment_id(branch_experiment_id, mode)
+            runs: list[RunRecord] = []
+            summaries = run_held_out(
+                tasks=tasks,
+                fixtures=fixtures,
+                model=model,
+                agent_config=settings.agent,
+                experiment_id=branch_id,
+                seed_skill=seed_skill,
+                final_skill=final_skill,
+                mode=mode,
+                runs_per_task=runs_per_task,
+                base_seed=settings.seed,
+                pricing=settings.pricing,
+                config=settings,
+                run_records=runs,
+            )
+            branch_runs[mode] = runs
+            branch_outputs[mode] = {
+                "experiment_id": branch_id,
+                "final_version": final_skill.version,
+                "model_id": _result_model_id_from_runs(runs, settings.model.model),
+                "conditions": [
+                    summary.condition_name.value
+                    for summary in summaries
+                    if summary.condition_name is not None
+                ],
+                "summaries": [summary.model_dump(mode="json") for summary in summaries],
+            }
+    finally:
+        close = getattr(model, "close", None)
+        if callable(close):
+            close()
+
+    held_out_root = experiment_path / "held-out"
+    _write_held_out_files(
+        root=held_out_root,
+        parent_experiment_id=parent_experiment_id,
+        runs_per_task=runs_per_task,
+        branches=branch_outputs,
+        branch_runs=branch_runs,
+    )
+    typer.echo(f"held_out_path: {held_out_root}")
+
+
 @app.command("rerun")
 def rerun(
     experiment: Annotated[Path, typer.Option("--experiment")],
@@ -337,6 +470,203 @@ def _experiment_output(
     )
     output_path.mkdir(parents=True, exist_ok=True)
     return output_path, experiment_id, now.isoformat().replace("+00:00", "Z")
+
+
+def _verify_frozen_inputs(root: Path, payload: Mapping[str, object]) -> dict[str, Path]:
+    """Verify optional B29-style input declarations before model creation.
+
+    B27 bundles do not contain ``config.inputs`` yet, so an absent declaration
+    remains valid.  When present, every declared file is checked against its
+    canonical digest and optional size.
+    """
+
+    inputs = payload.get("inputs")
+    if inputs is None:
+        return {}
+    if not isinstance(inputs, Mapping):
+        typer.echo("artifact config has invalid frozen inputs", err=True)
+        raise typer.Exit(code=1)
+    resolved: dict[str, Path] = {}
+    for name, declaration in sorted(inputs.items(), key=lambda item: str(item[0])):
+        if not isinstance(declaration, Mapping):
+            typer.echo(f"frozen input declaration is invalid: {name}", err=True)
+            raise typer.Exit(code=1)
+        relative = declaration.get("path", declaration.get("file"))
+        expected_hash = declaration.get("sha256")
+        expected_size = declaration.get("size")
+        if (
+            not isinstance(relative, str)
+            or not isinstance(expected_hash, str)
+            or (expected_size is not None and not isinstance(expected_size, int))
+        ):
+            typer.echo(f"frozen input declaration is invalid: {name}", err=True)
+            raise typer.Exit(code=1)
+        relative_path = Path(relative)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            typer.echo(f"frozen input path is unsafe: {name}", err=True)
+            raise typer.Exit(code=1)
+        path = root / relative_path
+        if not path.is_file():
+            typer.echo(f"frozen input is missing: {relative}", err=True)
+            raise typer.Exit(code=1)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest != expected_hash or (
+            expected_size is not None and path.stat().st_size != expected_size
+        ):
+            typer.echo(f"frozen input hash mismatch: {relative}", err=True)
+            raise typer.Exit(code=1)
+        normalized_name = str(name).lower()
+        if "dataset" in normalized_name:
+            resolved["dataset"] = path
+        elif "fixture" in normalized_name:
+            resolved["fixtures"] = path
+    if set(resolved) != {"dataset", "fixtures"}:
+        typer.echo("frozen inputs must declare dataset and fixtures", err=True)
+        raise typer.Exit(code=1)
+    return resolved
+
+
+def _bundle_branch_path(root: Path, value: object) -> Path:
+    if not isinstance(value, str):
+        raise ValueError("branch path must be a string")
+    relative = Path(value)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("branch path is unsafe")
+    return root / relative
+
+
+def _held_out_experiment_id(parent_id: str, mode: str) -> str:
+    """Derive a valid, stable held-out run identity from the parent branch."""
+
+    digest = hashlib.sha256(f"{parent_id}:held-out:{mode}".encode()).hexdigest()[:8]
+    prefix = parent_id.rsplit("-", 1)[0]
+    return f"{prefix}-{digest}"
+
+
+def _result_model_id_from_runs(runs: list[RunRecord], fallback: str) -> str:
+    model_ids = sorted({run.model_id for run in runs if run.model_id})
+    return "|".join(model_ids) or fallback
+
+
+def _write_held_out_files(
+    *,
+    root: Path,
+    parent_experiment_id: str,
+    runs_per_task: int,
+    branches: Mapping[str, Mapping[str, object]],
+    branch_runs: Mapping[str, list[RunRecord]],
+) -> None:
+    """Write only the additive held-out bundle and its own manifest."""
+
+    config_branches = {
+        mode: {
+            "conditions": list(branch.get("conditions", [])),
+            "experiment_id": branch.get("experiment_id"),
+            "final_version": branch.get("final_version"),
+            "model_id": branch.get("model_id"),
+        }
+        for mode, branch in sorted(branches.items())
+    }
+    model_ids = sorted(
+        {
+            str(branch["model_id"])
+            for branch in branches.values()
+            if isinstance(branch.get("model_id"), str) and branch["model_id"]
+        }
+    )
+    _write_json(
+        root / "config.json",
+        {
+            "artifact_kind": "held-out",
+            "artifact_schema": _ARTIFACT_SCHEMA,
+            "branches": config_branches,
+            "experiment_id": parent_experiment_id,
+            "model_id": "|".join(model_ids),
+            "parent_experiment_id": parent_experiment_id,
+            "runs_per_task": runs_per_task,
+        },
+    )
+    _write_json(
+        root / "held-out.json",
+        {
+            "artifact_kind": "held-out",
+            "experiment_id": parent_experiment_id,
+            "parent_experiment_id": parent_experiment_id,
+            "branches": {
+                mode: branch.get("summaries", []) for mode, branch in sorted(branches.items())
+            },
+        },
+    )
+
+    typed_runs = [run for mode in sorted(branch_runs) for run in branch_runs[mode]]
+    write_runs_files(typed_runs, root)
+    run_modes = {run.run_id: mode for mode in sorted(branch_runs) for run in branch_runs[mode]}
+    results_path = root / "results.csv"
+    with results_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+        fieldnames = list(reader.fieldnames or [])
+    if "mode" not in fieldnames:
+        insert_at = fieldnames.index("experiment_id") + 1
+        fieldnames.insert(insert_at, "mode")
+    for row in rows:
+        row["mode"] = run_modes.get(row.get("run_id", ""), "")
+        if not row["mode"]:
+            experiment_id = row.get("experiment_id", "")
+            row["mode"] = next(
+                (
+                    mode
+                    for mode, branch in branches.items()
+                    if branch.get("experiment_id") == experiment_id
+                ),
+                "",
+            )
+    stream = io.StringIO(newline="")
+    writer = csv.DictWriter(stream, fieldnames=fieldnames, lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    results_path.write_text(stream.getvalue(), encoding="utf-8")
+
+    _write_held_out_report(root, branches)
+    _write_bundle_manifest(root, parent_experiment_id)
+
+
+def _write_held_out_report(
+    root: Path,
+    branches: Mapping[str, Mapping[str, object]],
+) -> None:
+    lines = [
+        "# Held-Out Evaluation",
+        "",
+        "## Observed Results",
+        "",
+        "The test set is used only here, after the parent evolution bundle is complete.",
+        "",
+        "| Mode | Condition | Success rate | Runs |",
+        "|---|---|---:|---:|",
+    ]
+    for mode, branch in sorted(branches.items()):
+        summaries = branch.get("summaries", [])
+        if not isinstance(summaries, list):
+            continue
+        for summary in summaries:
+            if not isinstance(summary, Mapping):
+                continue
+            condition = summary.get("condition_name", "")
+            rate = summary.get("success_rate", 0.0)
+            runs = summary.get("run_count", 0)
+            lines.append(f"| {mode} | {condition} | {rate} | {runs} |")
+    lines.extend(
+        [
+            "",
+            "## Interpretation/Conclusions",
+            "",
+            "- These rows are observed held-out test-set results, not a causal claim.",
+            "- The test set was not used for mutation or promotion; it is evaluated only "
+            "by this final held-out command.",
+        ]
+    )
+    (root / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _load_cli_config(path: Path) -> AppConfig:
