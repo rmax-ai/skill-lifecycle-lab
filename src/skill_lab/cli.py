@@ -124,6 +124,7 @@ def baseline(
     write_runs_files(collector.runs, output_path)
     if seed_skill is not None:
         _write_seed_skill(output_path, seed_skill)
+    frozen_inputs = _freeze_inputs(output_path, settings)
     _write_json(
         output_path / "config.json",
         {
@@ -135,6 +136,7 @@ def baseline(
             },
             "configuration": settings.model_dump(mode="json"),
             "experiment_id": experiment_id,
+            "inputs": frozen_inputs,
             "model_id": settings.model.model,
         },
     )
@@ -234,6 +236,7 @@ def held_out(
         typer.echo("artifact config has unsupported artifact kind", err=True)
         raise typer.Exit(code=2)
     _verify_manifest(experiment_path)
+    frozen_inputs = _verify_frozen_inputs(experiment_path, payload)
 
     configuration = payload.get("configuration")
     if not isinstance(configuration, Mapping):
@@ -275,9 +278,8 @@ def held_out(
             raise typer.Exit(code=1)
         branch_specs.append((mode, branch_value, branch_experiment_id))
 
-    frozen_inputs = _verify_frozen_inputs(experiment_path, payload)
-    tasks = load_tasks(frozen_inputs.get("dataset", settings.dataset_path))
-    fixtures = frozen_inputs.get("fixtures", settings.fixtures_path)
+    tasks = load_tasks(frozen_inputs["dataset"])
+    fixtures = frozen_inputs["fixtures"]
     branch_outputs: dict[str, dict[str, object]] = {}
     branch_runs: dict[str, list[RunRecord]] = {}
     branch_skills: dict[str, tuple[Skill, Skill, str]] = {}
@@ -340,6 +342,7 @@ def held_out(
         runs_per_task=runs_per_task,
         branches=branch_outputs,
         branch_runs=branch_runs,
+        frozen_inputs=frozen_inputs,
     )
     typer.echo(f"held_out_path: {held_out_root}")
 
@@ -354,6 +357,7 @@ def rerun(
     experiment_path = _expanded(experiment)
     _verify_manifest(experiment_path)
     payload = _read_json(experiment_path / "config.json")
+    frozen_inputs = _verify_frozen_inputs(experiment_path, payload)
     configuration = payload.get("configuration")
     command = payload.get("command")
     if not isinstance(configuration, Mapping) or not isinstance(command, Mapping):
@@ -408,6 +412,8 @@ def rerun(
                 output_path=regenerated,
                 allow_live=allow_live,
                 seed_skill=seed_skill,
+                dataset_path=frozen_inputs["dataset"],
+                fixtures_path=frozen_inputs["fixtures"],
             )
         else:
             mode = command.get("mode")
@@ -425,6 +431,8 @@ def rerun(
                 allow_live=allow_live,
                 seed_skill=seed_skill,
                 database_path=Path(temporary_root) / "experiments.sqlite3",
+                dataset_path=frozen_inputs["dataset"],
+                fixtures_path=frozen_inputs["fixtures"],
             )
         if not _artifact_trees_equal(experiment_path, regenerated):
             typer.echo("rerun output is not byte-identical", err=True)
@@ -473,21 +481,19 @@ def _experiment_output(
 
 
 def _verify_frozen_inputs(root: Path, payload: Mapping[str, object]) -> dict[str, Path]:
-    """Verify optional B29-style input declarations before model creation.
-
-    B27 bundles do not contain ``config.inputs`` yet, so an absent declaration
-    remains valid.  When present, every declared file is checked against its
-    canonical digest and optional size.
-    """
+    """Verify required B29 input declarations before model creation."""
 
     inputs = payload.get("inputs")
-    if inputs is None:
-        return {}
     if not isinstance(inputs, Mapping):
         typer.echo("artifact config has invalid frozen inputs", err=True)
         raise typer.Exit(code=1)
+    if set(inputs) != {"dataset", "fixtures"}:
+        typer.echo("frozen inputs must declare dataset and fixtures", err=True)
+        raise typer.Exit(code=1)
+
     resolved: dict[str, Path] = {}
-    for name, declaration in sorted(inputs.items(), key=lambda item: str(item[0])):
+    for name in ("dataset", "fixtures"):
+        declaration = inputs[name]
         if not isinstance(declaration, Mapping):
             typer.echo(f"frozen input declaration is invalid: {name}", err=True)
             raise typer.Exit(code=1)
@@ -497,12 +503,17 @@ def _verify_frozen_inputs(root: Path, payload: Mapping[str, object]) -> dict[str
         if (
             not isinstance(relative, str)
             or not isinstance(expected_hash, str)
-            or (expected_size is not None and not isinstance(expected_size, int))
+            or not isinstance(expected_size, int)
+            or isinstance(expected_size, bool)
         ):
             typer.echo(f"frozen input declaration is invalid: {name}", err=True)
             raise typer.Exit(code=1)
         relative_path = Path(relative)
-        if relative_path.is_absolute() or ".." in relative_path.parts:
+        if (
+            relative_path.is_absolute()
+            or ".." in relative_path.parts
+            or relative_path.parts[:1] != ("inputs",)
+        ):
             typer.echo(f"frozen input path is unsafe: {name}", err=True)
             raise typer.Exit(code=1)
         path = root / relative_path
@@ -515,15 +526,53 @@ def _verify_frozen_inputs(root: Path, payload: Mapping[str, object]) -> dict[str
         ):
             typer.echo(f"frozen input hash mismatch: {relative}", err=True)
             raise typer.Exit(code=1)
-        normalized_name = str(name).lower()
-        if "dataset" in normalized_name:
-            resolved["dataset"] = path
-        elif "fixture" in normalized_name:
-            resolved["fixtures"] = path
-    if set(resolved) != {"dataset", "fixtures"}:
-        typer.echo("frozen inputs must declare dataset and fixtures", err=True)
-        raise typer.Exit(code=1)
+        resolved[name] = path
     return resolved
+
+
+def _freeze_inputs(
+    root: Path,
+    settings: AppConfig,
+    *,
+    source_paths: Mapping[str, Path] | None = None,
+) -> dict[str, dict[str, int | str]]:
+    """Copy the scientific inputs into a bundle and return their declarations."""
+
+    sources = {
+        "dataset": source_paths["dataset"] if source_paths is not None else settings.dataset_path,
+        "fixtures": (
+            source_paths["fixtures"] if source_paths is not None else settings.fixtures_path
+        ),
+    }
+    return _copy_input_files(root, sources)
+
+
+def _copy_input_files(
+    root: Path,
+    sources: Mapping[str, Path],
+) -> dict[str, dict[str, int | str]]:
+    """Copy both frozen inputs and return canonical relative-path declarations."""
+
+    declarations: dict[str, dict[str, int | str]] = {}
+    basenames: set[str] = set()
+    for name in ("dataset", "fixtures"):
+        source = _expanded(sources[name])
+        if not source.is_file():
+            raise ValueError(f"frozen input source is missing: {source}")
+        basename = source.name
+        if not basename or basename in basenames:
+            raise ValueError("frozen input basenames must be distinct")
+        basenames.add(basename)
+        data = source.read_bytes()
+        destination = root / "inputs" / basename
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+        declarations[name] = {
+            "path": destination.relative_to(root).as_posix(),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "size": len(data),
+        }
+    return declarations
 
 
 def _bundle_branch_path(root: Path, value: object) -> Path:
@@ -555,9 +604,11 @@ def _write_held_out_files(
     runs_per_task: int,
     branches: Mapping[str, Mapping[str, object]],
     branch_runs: Mapping[str, list[RunRecord]],
+    frozen_inputs: Mapping[str, Path],
 ) -> None:
     """Write only the additive held-out bundle and its own manifest."""
 
+    input_declarations = _copy_input_files(root, frozen_inputs)
     config_branches = {
         mode: {
             "conditions": list(branch.get("conditions", [])),
@@ -581,6 +632,7 @@ def _write_held_out_files(
             "artifact_schema": _ARTIFACT_SCHEMA,
             "branches": config_branches,
             "experiment_id": parent_experiment_id,
+            "inputs": input_declarations,
             "model_id": "|".join(model_ids),
             "parent_experiment_id": parent_experiment_id,
             "runs_per_task": runs_per_task,
@@ -690,6 +742,8 @@ def _run_ablation_artifact(
     output_path: Path,
     allow_live: bool,
     seed_skill: Skill | None = None,
+    dataset_path: Path | None = None,
+    fixtures_path: Path | None = None,
 ) -> None:
     """Run one ablation and serialize a stable bundle with both branches."""
 
@@ -698,7 +752,9 @@ def _run_ablation_artifact(
         skill,
         "v001",
     )
-    tasks = load_tasks(settings.dataset_path)
+    runtime_dataset_path = dataset_path or settings.dataset_path
+    runtime_fixtures_path = fixtures_path or settings.fixtures_path
+    tasks = load_tasks(runtime_dataset_path)
     output_path.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="skill-lab-ablation-") as temporary_root:
@@ -706,7 +762,7 @@ def _run_ablation_artifact(
         try:
             results = run_ablation(
                 tasks=tasks,
-                fixtures=settings.fixtures_path,
+                fixtures=runtime_fixtures_path,
                 model=model,
                 agent_config=settings.agent,
                 experiment_id=experiment_id,
@@ -736,6 +792,10 @@ def _run_ablation_artifact(
         runs_per_task=runs_per_task,
         experiment_id=experiment_id,
         results=results,
+        source_paths={
+            "dataset": runtime_dataset_path,
+            "fixtures": runtime_fixtures_path,
+        },
     )
     _write_bundle_manifest(output_path, experiment_id)
 
@@ -752,11 +812,15 @@ def _run_evolution_artifact(
     allow_live: bool,
     seed_skill: Skill | None = None,
     database_path: Path | None = None,
+    dataset_path: Path | None = None,
+    fixtures_path: Path | None = None,
 ) -> ExperimentResult:
     """Run one evolution and publish its complete durable bundle."""
 
     resolved_seed_skill = seed_skill or load_skill(settings.skills_root, skill, "v001")
-    tasks = load_tasks(settings.dataset_path)
+    runtime_dataset_path = dataset_path or settings.dataset_path
+    runtime_fixtures_path = fixtures_path or settings.fixtures_path
+    tasks = load_tasks(runtime_dataset_path)
     evolution_tasks = [task for task in tasks if task.split != Split.TEST]
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -766,7 +830,7 @@ def _run_evolution_artifact(
             with ExperimentStore(database_path or settings.database_path) as store:
                 result = run_evolution(
                     tasks=evolution_tasks,
-                    fixtures=settings.fixtures_path,
+                    fixtures=runtime_fixtures_path,
                     model=model,
                     agent_config=settings.agent,
                     experiment_id=experiment_id,
@@ -799,6 +863,10 @@ def _run_evolution_artifact(
         mode=mode,
         experiment_id=experiment_id,
         result=result,
+        source_paths={
+            "dataset": runtime_dataset_path,
+            "fixtures": runtime_fixtures_path,
+        },
     )
     _write_bundle_manifest(output_path, experiment_id)
     return result
@@ -825,7 +893,13 @@ def _write_bundle_config(
     runs_per_task: int,
     experiment_id: str,
     results: Mapping[str, object],
+    source_paths: Mapping[str, Path],
 ) -> None:
+    frozen_inputs = _freeze_inputs(
+        root,
+        settings,
+        source_paths=source_paths,
+    )
     branches = {
         mode: {
             "experiment_id": result.experiment_id,
@@ -848,6 +922,7 @@ def _write_bundle_config(
             },
             "configuration": settings.model_dump(mode="json"),
             "experiment_id": experiment_id,
+            "inputs": frozen_inputs,
             "mode": "ablation",
         },
     )
@@ -863,7 +938,13 @@ def _write_evolution_bundle_config(
     mode: Literal["verified", "naive"],
     experiment_id: str,
     result: ExperimentResult,
+    source_paths: Mapping[str, Path],
 ) -> None:
+    frozen_inputs = _freeze_inputs(
+        root,
+        settings,
+        source_paths=source_paths,
+    )
     _write_json(
         root / "config.json",
         {
@@ -884,6 +965,7 @@ def _write_evolution_bundle_config(
             },
             "configuration": settings.model_dump(mode="json"),
             "experiment_id": experiment_id,
+            "inputs": frozen_inputs,
             "mode": mode,
         },
     )
