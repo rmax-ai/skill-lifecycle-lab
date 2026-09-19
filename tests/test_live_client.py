@@ -193,6 +193,53 @@ def test_agent_request_messages_include_protocol_tools_and_history() -> None:
     }
 
 
+def test_system_message_declares_final_output_schema() -> None:
+    expected_sentence = (
+        "The final output object must contain exactly these fields: ticket_id (string), "
+        "classification (string), severity (string), escalation_path (string), "
+        'final_status (string), required_updates (an object with exactly the keys "owner" '
+        'and "priority", both strings), and evidence (an array of the evidence-label strings '
+        "collected from the runbook). No additional fields are allowed."
+    )
+    first_request = _agent_request()
+    second_request = _agent_request()
+    second_request["task"] = {
+        **second_request["task"],
+        "id": "SENTINEL_SECOND_TASK",
+        "input": "SENTINEL_SECOND_INPUT",
+        "max_calls": 9,
+    }
+
+    first_system = _client()._request_body(first_request)["messages"][0]["content"]
+    second_system = _client()._request_body(second_request)["messages"][0]["content"]
+    first_start = first_system.index(expected_sentence)
+    second_start = second_system.index(expected_sentence)
+    first_schema = first_system[first_start : first_start + len(expected_sentence)]
+    second_schema = second_system[second_start : second_start + len(expected_sentence)]
+
+    assert first_schema == second_schema == expected_sentence
+    for field in (
+        "ticket_id",
+        "classification",
+        "severity",
+        "escalation_path",
+        "final_status",
+        "required_updates",
+        "owner",
+        "priority",
+        "evidence",
+    ):
+        assert field in first_schema
+    for sentinel in (
+        "SENTINEL_SECOND_TASK",
+        "SENTINEL_SECOND_INPUT",
+        "IR-TR-01",
+        "Handle the placeholder incident.",
+    ):
+        assert sentinel not in first_schema
+        assert sentinel not in second_schema
+
+
 def test_tool_history_replays_as_user_tool_result_messages() -> None:
     client = _client()
     messages = client._request_body(_agent_request())["messages"]

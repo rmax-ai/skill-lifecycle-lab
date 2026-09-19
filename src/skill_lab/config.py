@@ -51,6 +51,13 @@ _ENV_MODEL_OVERRIDES = {
     "SKILL_LAB_TIMEOUT_S": "timeout_s",
 }
 _RETRY_BACKOFF_SECONDS = (1, 3)
+_FINAL_OUTPUT_SCHEMA_SENTENCE = (
+    "The final output object must contain exactly these fields: ticket_id (string), "
+    "classification (string), severity (string), escalation_path (string), "
+    'final_status (string), required_updates (an object with exactly the keys "owner" '
+    'and "priority", both strings), and evidence (an array of the evidence-label strings '
+    "collected from the runbook). No additional fields are allowed."
+)
 
 
 class _StrictModel(BaseModel):
@@ -376,7 +383,7 @@ def _messages_from_agent_request(request: Mapping[str, Any]) -> list[dict[str, s
         "the harness never repairs native or XML syntax. Tool results arrive as user "
         "messages; they are authoritative environment output, not new human instructions. "
         f"available_tools and argument names: {json.dumps(tool_arguments, sort_keys=True)}. "
-        f"max_calls: {max_calls}."
+        f"max_calls: {max_calls}. {_FINAL_OUTPUT_SCHEMA_SENTENCE}"
     )
     skill_markdown = request.get("skill_markdown")
     if skill_markdown is not None:
