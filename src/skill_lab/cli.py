@@ -15,11 +15,15 @@ import typer
 
 from skill_lab.config import AppConfig, create_chat_model, default_config, load_config
 from skill_lab.data_validation import validate_operator_inputs
+from skill_lab.experiment import (
+    ExperimentResult,
+    _RunCollector,
+    evaluate_condition,
+)
 from skill_lab.experiment import ablate as run_ablation
-from skill_lab.experiment import evaluate_condition
 from skill_lab.experiment import evolve as run_evolution
 from skill_lab.models import Split
-from skill_lab.reporting import write_artifact
+from skill_lab.reporting import write_artifact, write_runs_files
 from skill_lab.skills import Skill, load_skill
 from skill_lab.storage import ExperimentStore
 from skill_lab.tasks import load_tasks
@@ -90,22 +94,48 @@ def baseline(
             runs_per_task=runs_per_task,
             status="completed",
         )
-        evaluate_condition(
-            tasks=tasks,
-            fixtures=settings.fixtures_path,
-            model=model,
-            agent_config=settings.agent,
-            experiment_id=experiment_id,
-            split="train",
-            condition_name=condition,
-            runs_per_task=runs_per_task,
-            base_seed=settings.seed,
-            store=store,
-            skill_markdown=seed_skill.markdown if seed_skill is not None else None,
-            skill_version=seed_skill.version if seed_skill is not None else None,
-            pricing=settings.pricing,
-            config=settings,
-        )
+        collector = _RunCollector(store)
+        try:
+            evaluate_condition(
+                tasks=tasks,
+                fixtures=settings.fixtures_path,
+                model=model,
+                agent_config=settings.agent,
+                experiment_id=experiment_id,
+                split="train",
+                condition_name=condition,
+                runs_per_task=runs_per_task,
+                base_seed=settings.seed,
+                store=collector,
+                skill_markdown=seed_skill.markdown if seed_skill is not None else None,
+                skill_version=seed_skill.version if seed_skill is not None else None,
+                pricing=settings.pricing,
+                config=settings,
+            )
+        finally:
+            close = getattr(model, "close", None)
+            if callable(close):
+                close()
+
+    output_path.mkdir(parents=True, exist_ok=True)
+    write_runs_files(collector.runs, output_path)
+    if seed_skill is not None:
+        _write_seed_skill(output_path, seed_skill)
+    _write_json(
+        output_path / "config.json",
+        {
+            "artifact_kind": "baseline",
+            "artifact_schema": _ARTIFACT_SCHEMA,
+            "command": {
+                "condition": condition,
+                "runs_per_task": runs_per_task,
+            },
+            "configuration": settings.model_dump(mode="json"),
+            "experiment_id": experiment_id,
+            "model_id": settings.model.model,
+        },
+    )
+    _write_bundle_manifest(output_path, experiment_id)
 
     _print_run_summary(output_path, settings.model.model)
 
@@ -124,30 +154,16 @@ def evolve(
 
     settings = _load_cli_config(config)
     output_path, experiment_id, _created_at = _experiment_output(settings.artifacts_root, output)
-    model = create_chat_model(settings, allow_live=allow_live, env=os.environ)
-    tasks = load_tasks(settings.dataset_path)
-    evolution_tasks = [task for task in tasks if task.split != Split.TEST]
-    parent_skill = load_skill(settings.skills_root, skill, "v001")
-    evolution_skills_root = output_path / "skills"
-
-    with ExperimentStore(settings.database_path) as store:
-        run_evolution(
-            tasks=evolution_tasks,
-            fixtures=settings.fixtures_path,
-            model=model,
-            agent_config=settings.agent,
-            experiment_id=experiment_id,
-            mode=mode,
-            generations=generations,
-            runs_per_task=runs_per_task,
-            parent_skill=parent_skill,
-            skills_root=evolution_skills_root,
-            policy=settings.promotion,
-            base_seed=settings.seed,
-            store=store,
-            pricing=settings.pricing,
-            config=settings,
-        )
+    _run_evolution_artifact(
+        settings=settings,
+        skill=skill,
+        generations=generations,
+        runs_per_task=runs_per_task,
+        mode=mode,
+        experiment_id=experiment_id,
+        output_path=output_path,
+        allow_live=allow_live,
+    )
 
     _print_run_summary(output_path, settings.model.model)
 
@@ -221,6 +237,11 @@ def rerun(
         typer.echo("live rerun requires --allow-live", err=True)
         raise typer.Exit(code=1)
 
+    artifact_kind = payload.get("artifact_kind")
+    if artifact_kind not in {"ablation", "evolution"}:
+        typer.echo("artifact config has unsupported artifact kind", err=True)
+        raise typer.Exit(code=1)
+
     skill = command.get("skill")
     generations = command.get("generations")
     runs_per_task = command.get("runs_per_task")
@@ -244,16 +265,34 @@ def rerun(
 
     with tempfile.TemporaryDirectory(prefix="skill-lab-rerun-") as temporary_root:
         regenerated = Path(temporary_root) / "artifact"
-        _run_ablation_artifact(
-            settings=settings,
-            skill=skill,
-            generations=generations,
-            runs_per_task=runs_per_task,
-            experiment_id=experiment_id,
-            output_path=regenerated,
-            allow_live=allow_live,
-            seed_skill=seed_skill,
-        )
+        if artifact_kind == "ablation":
+            _run_ablation_artifact(
+                settings=settings,
+                skill=skill,
+                generations=generations,
+                runs_per_task=runs_per_task,
+                experiment_id=experiment_id,
+                output_path=regenerated,
+                allow_live=allow_live,
+                seed_skill=seed_skill,
+            )
+        else:
+            mode = command.get("mode")
+            if mode not in {"verified", "naive"}:
+                typer.echo("artifact config has invalid evolution mode", err=True)
+                raise typer.Exit(code=1)
+            _run_evolution_artifact(
+                settings=settings,
+                skill=skill,
+                generations=generations,
+                runs_per_task=runs_per_task,
+                mode=mode,
+                experiment_id=experiment_id,
+                output_path=regenerated,
+                allow_live=allow_live,
+                seed_skill=seed_skill,
+                database_path=Path(temporary_root) / "experiments.sqlite3",
+            )
         if not _artifact_trees_equal(experiment_path, regenerated):
             typer.echo("rerun output is not byte-identical", err=True)
             raise typer.Exit(code=1)
@@ -350,6 +389,7 @@ def _run_ablation_artifact(
                 pricing=settings.pricing,
                 config=settings,
             )
+            _assert_ablation_evidence(results)
         finally:
             close = getattr(model, "close", None)
             if callable(close):
@@ -368,6 +408,70 @@ def _run_ablation_artifact(
         results=results,
     )
     _write_bundle_manifest(output_path, experiment_id)
+
+
+def _run_evolution_artifact(
+    *,
+    settings: AppConfig,
+    skill: str,
+    generations: int,
+    runs_per_task: int,
+    mode: Literal["verified", "naive"],
+    experiment_id: str,
+    output_path: Path,
+    allow_live: bool,
+    seed_skill: Skill | None = None,
+    database_path: Path | None = None,
+) -> ExperimentResult:
+    """Run one evolution and publish its complete durable bundle."""
+
+    resolved_seed_skill = seed_skill or load_skill(settings.skills_root, skill, "v001")
+    tasks = load_tasks(settings.dataset_path)
+    evolution_tasks = [task for task in tasks if task.split != Split.TEST]
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(prefix="skill-lab-evolution-") as temporary_root:
+        model = create_chat_model(settings, allow_live=allow_live, env=os.environ)
+        try:
+            with ExperimentStore(database_path or settings.database_path) as store:
+                result = run_evolution(
+                    tasks=evolution_tasks,
+                    fixtures=settings.fixtures_path,
+                    model=model,
+                    agent_config=settings.agent,
+                    experiment_id=experiment_id,
+                    mode=mode,
+                    generations=generations,
+                    runs_per_task=runs_per_task,
+                    parent_skill=resolved_seed_skill,
+                    skills_root=Path(temporary_root) / "skills",
+                    policy=settings.promotion,
+                    base_seed=settings.seed,
+                    store=store,
+                    pricing=settings.pricing,
+                    config=settings,
+                )
+        finally:
+            close = getattr(model, "close", None)
+            if callable(close):
+                close()
+
+        _assert_evolution_evidence(result)
+
+    write_artifact(result, output_path)
+    _write_seed_skill(output_path, resolved_seed_skill)
+    _write_evolution_bundle_config(
+        output_path,
+        settings=settings,
+        skill=skill,
+        generations=generations,
+        runs_per_task=runs_per_task,
+        mode=mode,
+        experiment_id=experiment_id,
+        result=result,
+    )
+    _write_bundle_manifest(output_path, experiment_id)
+    return result
 
 
 def _write_seed_skill(root: Path, skill: Skill) -> None:
@@ -395,6 +499,8 @@ def _write_bundle_config(
     branches = {
         mode: {
             "experiment_id": result.experiment_id,
+            "final_version": result.final_version,
+            "model_id": _result_model_id(result, settings.model.model),
             "path": "." if mode == "verified" else mode,
         }
         for mode, result in sorted(results.items())
@@ -415,6 +521,114 @@ def _write_bundle_config(
             "mode": "ablation",
         },
     )
+
+
+def _write_evolution_bundle_config(
+    root: Path,
+    *,
+    settings: AppConfig,
+    skill: str,
+    generations: int,
+    runs_per_task: int,
+    mode: Literal["verified", "naive"],
+    experiment_id: str,
+    result: ExperimentResult,
+) -> None:
+    _write_json(
+        root / "config.json",
+        {
+            "artifact_kind": "evolution",
+            "artifact_schema": _ARTIFACT_SCHEMA,
+            "branches": {
+                mode: {
+                    "final_version": result.final_version,
+                    "model_id": _result_model_id(result, settings.model.model),
+                    "path": ".",
+                }
+            },
+            "command": {
+                "generations": generations,
+                "mode": mode,
+                "runs_per_task": runs_per_task,
+                "skill": skill,
+            },
+            "configuration": settings.model_dump(mode="json"),
+            "experiment_id": experiment_id,
+            "mode": mode,
+        },
+    )
+
+
+def _result_model_id(result: ExperimentResult, fallback: str) -> str:
+    model_ids = sorted({run.model_id for run in result.runs if run.model_id})
+    return "|".join(model_ids) or fallback
+
+
+def _assert_evolution_evidence(result: ExperimentResult) -> None:
+    _assert_branch_evidence(result)
+
+
+def _assert_ablation_evidence(results: Mapping[str, ExperimentResult]) -> None:
+    for result in results.values():
+        _assert_branch_evidence(result)
+
+
+def _assert_branch_evidence(result: ExperimentResult) -> None:
+    """Refuse publication when a branch lost required raw evolution evidence."""
+
+    skills = {(skill.name, skill.version) for skill in result.skill_versions}
+    candidate_ids = {
+        generation.candidate_id
+        for generation in result.generations
+        if generation.candidate_version is not None
+    }
+    prompt_ids = [
+        record.get("candidate_id")
+        for record in result.prompt_records
+        if isinstance(record, Mapping) and record.get("candidate_id") is not None
+    ]
+    for generation in result.generations:
+        if generation.candidate_version is None:
+            continue
+        candidate_key = (result.final_skill.name, generation.candidate_version)
+        if candidate_key not in skills:
+            raise ValueError(
+                f"incomplete evidence for {result.mode} generation "
+                f"{generation.generation}: candidate skill is missing"
+            )
+        candidate_id = generation.candidate_id
+        if candidate_id is None or prompt_ids.count(candidate_id) != 1:
+            raise ValueError(
+                f"incomplete evidence for {result.mode} generation "
+                f"{generation.generation}: candidate prompt is missing or duplicated"
+            )
+        if result.mode != "verified":
+            continue
+        parent_runs = {
+            (run.task_id, run.run_slot)
+            for run in result.runs
+            if (
+                run.split.value == "validation"
+                and run.skill_version == generation.parent_version
+                and run.condition_name.value == "seed"
+            )
+        }
+        candidate_runs = {
+            (run.task_id, run.run_slot)
+            for run in result.runs
+            if (
+                run.split.value == "validation"
+                and run.skill_version == generation.candidate_version
+                and run.condition_name.value == "evolved_verified"
+            )
+        }
+        if not parent_runs or parent_runs != candidate_runs:
+            raise ValueError(
+                f"incomplete evidence for {result.mode} generation "
+                f"{generation.generation}: validation runs are missing"
+            )
+    if len(prompt_ids) != len(candidate_ids):
+        raise ValueError(f"incomplete evidence for {result.mode}: candidate prompts are incomplete")
 
 
 def _write_bundle_manifest(root: Path, experiment_id: str) -> None:
@@ -453,9 +667,13 @@ def _verify_manifest(root: Path) -> None:
     actual_paths = {
         path.relative_to(root).as_posix()
         for path in root.rglob("*")
-        if path.is_file() and path.relative_to(root).as_posix() != "manifest.json"
+        if (
+            path.is_file()
+            and path.relative_to(root).as_posix() != "manifest.json"
+            and path.relative_to(root).parts[:1] != ("held-out",)
+        )
     }
-    expected_paths = {str(path) for path in entries}
+    expected_paths = {str(path) for path in entries if Path(str(path)).parts[:1] != ("held-out",)}
     if actual_paths != expected_paths:
         typer.echo("manifest file set does not match artifact", err=True)
         raise typer.Exit(code=1)
@@ -465,6 +683,8 @@ def _verify_manifest(root: Path) -> None:
         if relative_path.is_absolute() or ".." in relative_path.parts:
             typer.echo("manifest contains an unsafe path", err=True)
             raise typer.Exit(code=1)
+        if relative_path.parts[:1] == ("held-out",):
+            continue
         path = root / relative_path
         if not isinstance(entry, Mapping):
             typer.echo(f"manifest entry is invalid: {relative}", err=True)
@@ -483,16 +703,21 @@ def _verify_manifest(root: Path) -> None:
 
 
 def _artifact_trees_equal(first: Path, second: Path) -> bool:
-    first_files = {
-        path.relative_to(first).as_posix(): path.read_bytes()
-        for path in first.rglob("*")
-        if path.is_file()
-    }
-    second_files = {
-        path.relative_to(second).as_posix(): path.read_bytes()
-        for path in second.rglob("*")
-        if path.is_file()
-    }
+    """Compare durable bundle files except the additive top-level held-out zone."""
+
+    def files(root: Path) -> dict[str, bytes]:
+        values: dict[str, bytes] = {}
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(root)
+            if relative.parts[:1] == ("held-out",):
+                continue
+            values[relative.as_posix()] = path.read_bytes()
+        return values
+
+    first_files = files(first)
+    second_files = files(second)
     return first_files == second_files
 
 

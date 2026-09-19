@@ -105,13 +105,26 @@ def write_artifact(result: ExperimentResult, root: Path) -> Path:
     output_root = _expanded(root)
     output_root.mkdir(parents=True, exist_ok=True)
     _write_json(output_root / "config.json", _configuration(result))
-    _write_text(output_root / "results.csv", _results_csv(result))
+    write_runs_files(_run_records(result), output_root)
     _write_json(output_root / "generations.json", _generations_payload(result))
     _write_text(output_root / "report.md", _report(result))
-    _write_text(output_root / "trajectories.jsonl", _trajectories_jsonl(result))
     _write_text(output_root / "prompts.jsonl", _prompts_jsonl(result))
     _write_skill(output_root, result)
     _write_manifest(output_root, result.experiment_id)
+    return output_root
+
+
+def write_runs_files(runs: Sequence[RunRecord], root: Path) -> Path:
+    """Write the canonical tabular and trajectory files for collected runs."""
+
+    output_root = _expanded(root)
+    output_root.mkdir(parents=True, exist_ok=True)
+    normalized_runs = _sorted_unique_runs(runs)
+    _write_text(output_root / "results.csv", _results_csv_for_runs(normalized_runs))
+    _write_text(
+        output_root / "trajectories.jsonl",
+        _trajectories_jsonl_for_runs(normalized_runs),
+    )
     return output_root
 
 
@@ -151,10 +164,14 @@ def _generation_sort_key(record: GenerationRecord) -> tuple[int, str, str]:
 
 
 def _results_csv(result: ExperimentResult) -> str:
+    return _results_csv_for_runs(_run_records(result))
+
+
+def _results_csv_for_runs(runs: Sequence[RunRecord]) -> str:
     stream = io.StringIO(newline="")
     writer = csv.DictWriter(stream, fieldnames=RESULT_COLUMNS, lineterminator="\n")
     writer.writeheader()
-    for run in _run_records(result):
+    for run in runs:
         writer.writerow(_run_row(run))
     return stream.getvalue()
 
@@ -188,8 +205,12 @@ def _run_row(run: RunRecord) -> dict[str, Any]:
 
 
 def _run_records(result: ExperimentResult) -> list[RunRecord]:
+    return _sorted_unique_runs((*result.runs, *result.held_out_runs))
+
+
+def _sorted_unique_runs(candidates: Sequence[RunRecord | Mapping[str, Any]]) -> list[RunRecord]:
     records: dict[str, RunRecord] = {}
-    for candidate in (*result.runs, *result.held_out_runs):
+    for candidate in candidates:
         run = candidate if isinstance(candidate, RunRecord) else RunRecord.model_validate(candidate)
         records.setdefault(run.run_id, run)
     return sorted(
@@ -221,8 +242,12 @@ def _flatten_records(value: object) -> list[object]:
 
 
 def _trajectories_jsonl(result: ExperimentResult) -> str:
+    return _trajectories_jsonl_for_runs(_run_records(result))
+
+
+def _trajectories_jsonl_for_runs(runs: Sequence[RunRecord]) -> str:
     lines: list[str] = []
-    for run in _run_records(result):
+    for run in runs:
         payload = {
             "condition": _enum_value(run.condition_name),
             "experiment_id": run.experiment_id,
