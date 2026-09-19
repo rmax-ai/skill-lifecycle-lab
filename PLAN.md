@@ -772,3 +772,27 @@ Evidence bundle: targeted pytest; collect count; ruff; full suite
 
 Post-B33: full acceptance block + committed example regeneration if contents change, then integrity review 3 (scoped to the three residuals + regression) gates the live spend.
 
+## §10.2 Live-provider body extensions (operator amendment, 2026-09-19)
+
+Finding from the first live connectivity smoke (stage ① of the operator run, `~/scratch/skilllab-live/smoke-verified-1`): DeepSeek V4.1 Flash defaults to **thinking mode ON** when `thinking` is unset; the thinking budget is billed as output tokens and consumed the entire `max_tokens` window (e.g. 3,927 of 4,000 completion tokens on the mutation call, `finish_reason: length`, truncated/empty content) and let agent responses drift into role-played continuations that fail the strict JSON contract. A raw-endpoint probe confirmed the fix: top-level `"thinking": {"type": "disabled"}` yields `reasoning 0`, exact JSON content, 5 completion tokens.
+
+The live client therefore gains an operator-supplied **request-body extension** mechanism (`config.model.extra_body`), merged verbatim into every chat-completions body it sends. Fixed contract fields (`model`, `messages`, `temperature`, `max_tokens`) cannot be overridden — a collision raises. The live operator config sets `extra_body: {"thinking": {"type": "disabled"}}` so the experiment measures task capability, not thinking-budget truncation. This is part of the fixed model environment and is recorded in every bundle configuration; it applies identically to all conditions.
+
+Also recorded for operators: on this box the DeepSeek key resolves via the local password store (`pass show hermes/deepseek/api-key`), not the raw `.env` line (which holds a `$(pass …)` command reference that the lab's live client must not receive literally).
+
+#### B34 — Live request-body extensions (operator provider knobs)
+Epic: E7
+Goal: Add a contract-safe `extra_body` passthrough so operators can configure provider-specific body fields (e.g. DeepSeek thinking control) for live runs.
+FILE allowlist (4): `src/skill_lab/config.py`; `configs/default.json`; `configs/live-deepseek.json`; `tests/test_live_client.py`
+- Implement §10.2: the model config gains `extra_body: dict | None = None` (JSON object or null); `DEFAULT_CONFIG` and `configs/default.json` include `"extra_body": null`; `_request_body` merges a non-null `extra_body` into the outgoing body and raises ValueError if it collides with any fixed contract field (`model`, `messages`, `temperature`, `max_tokens`) or is not an object.
+- Update `configs/live-deepseek.json`: add `"extra_body": {"thinking": {"type": "disabled"}}`.
+- Tests extend `tests/test_live_client.py`: `test_extra_body_merged_into_request_body`; `test_extra_body_contract_collision_rejected`; `test_extra_body_absent_leaves_body_unchanged`.
+Test spec: hermetic; no network; existing serialization assertions preserved.
+Named tests: `test_extra_body_merged_into_request_body`; `test_extra_body_contract_collision_rejected`; `test_extra_body_absent_leaves_body_unchanged`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_live_client.py tests/test_config.py`
+Dependencies: B33
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+Post-B34 operator steps: regenerate `artifacts/example-mock` (bundle configurations gain `extra_body: null`), re-run the acceptance block, commit, then a scoped review 4 (offline: passthrough plumbing, contract-field refusal, regenerated-example integrity, no regressions) before the operator re-runs the live stage-① smoke and proceeds to stage ②.
+
