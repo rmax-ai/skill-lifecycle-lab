@@ -49,6 +49,7 @@ class Skill(BaseModel):
     description: str = Field(min_length=1)
     markdown: str = Field(min_length=1)
     metadata: SkillMetadata
+    rationale: str | None = None
 
     @property
     def skill_markdown(self) -> str:
@@ -156,6 +157,25 @@ def _load_metadata(path: Path) -> SkillMetadata:
         raise ValueError("skill metadata has invalid fields") from error
 
 
+def _normalize_rationale(rationale: str) -> str:
+    if not isinstance(rationale, str):
+        raise ValueError("candidate rationale must be text")
+    normalized = rationale.rstrip("\r\n")
+    if not normalized.strip():
+        raise ValueError("candidate rationale must not be empty")
+    return normalized
+
+
+def _load_rationale(path: Path) -> str | None:
+    try:
+        rationale = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError) as error:
+        raise ValueError("candidate rationale is not readable") from error
+    return _normalize_rationale(rationale)
+
+
 def load_skill(root: Path, name: str, version: str) -> Skill:
     """Load one skill and verify its directory, Markdown, and metadata versions agree."""
 
@@ -177,12 +197,14 @@ def load_skill(root: Path, name: str, version: str) -> Skill:
         raise ValueError("skill version does not match its directory")
 
     metadata = _load_metadata(metadata_path)
+    rationale = _load_rationale(skill_dir / "RATIONALE.md")
     return Skill(
         name=name,
         version=version,
         description=front_matter["description"],
         markdown=markdown,
         metadata=metadata,
+        rationale=rationale,
     )
 
 
@@ -238,6 +260,7 @@ def write_candidate(
     parent_version: str | None = None,
     markdown: str | None = None,
     description: str | None = None,
+    rationale: str | None = None,
     created_by: str = "mutation",
     generation: int | None = None,
     status: str = "proposed",
@@ -304,8 +327,10 @@ def write_candidate(
             raise ValueError("parent versions do not match")
         if generation is None:
             generation = candidate_model.generation
-        if status == "proposed":
-            status = candidate_model.status.value
+        if rationale is not None and rationale != candidate_model.rationale:
+            raise ValueError("candidate rationales do not match")
+        if rationale is None:
+            rationale = candidate_model.rationale
 
     if (
         candidate_markdown is None
@@ -377,12 +402,18 @@ def write_candidate(
         description,
         parent_skill,
     )
+    normalized_rationale = _normalize_rationale(rationale) if rationale is not None else None
 
     candidate_dir = _expanded(root) / name / version
     candidate_dir.mkdir(parents=True, exist_ok=False)
     (candidate_dir / "SKILL.md").write_text(normalized_markdown, encoding="utf-8")
     metadata_json = json.dumps(metadata.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
     (candidate_dir / "metadata.json").write_text(metadata_json, encoding="utf-8")
+    if normalized_rationale is not None:
+        (candidate_dir / "RATIONALE.md").write_text(
+            f"{normalized_rationale}\n",
+            encoding="utf-8",
+        )
     return candidate_dir
 
 
