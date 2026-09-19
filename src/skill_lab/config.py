@@ -30,6 +30,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "temperature": 0.0,
         "max_tokens": 800,
         "timeout_s": 30,
+        "extra_body": None,
     },
     "agent": {"max_steps": 8, "token_budget": 2400},
     "promotion": {"regression_threshold": 0.00, "cost_tolerance": 1.10},
@@ -65,6 +66,7 @@ class ModelConfig(_StrictModel):
     temperature: float = Field(ge=0)
     max_tokens: int = Field(ge=1)
     timeout_s: float = Field(gt=0)
+    extra_body: dict[str, Any] | None = None
 
 
 class PromotionConfig(_StrictModel):
@@ -247,12 +249,22 @@ class OpenAICompatibleClient:
             messages = _validated_messages(messages)
         else:
             raise ValueError("request kind must be 'agent', 'mutation', or absent")
-        return {
+        body = {
             "model": self.config.model,
             "messages": messages,
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
         }
+        extra_body = self.config.extra_body
+        if extra_body is None:
+            return body
+        if not isinstance(extra_body, dict):
+            raise ValueError("extra_body must be a JSON object or null")
+        contract_fields = {"model", "messages", "temperature", "max_tokens"}
+        collisions = contract_fields.intersection(extra_body)
+        if collisions:
+            raise ValueError(f"extra_body cannot override contract fields: {sorted(collisions)}")
+        return {**body, **extra_body}
 
 
 def create_chat_model(

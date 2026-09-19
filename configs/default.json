@@ -10,6 +10,7 @@
   "model": {
     "api_key_env": "SKILL_LAB_API_KEY",
     "base_url": "http://localhost:8000/v1",
+    "extra_body": null,
     "max_tokens": 800,
     "model": "mock-incident-v1",
     "provider": "mock",

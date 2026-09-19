@@ -45,7 +45,11 @@ class _StubClient:
         return None
 
 
-def _client(http_client: _StubClient | None = None) -> OpenAICompatibleClient:
+def _client(
+    http_client: _StubClient | None = None,
+    *,
+    extra_body: dict[str, Any] | None = None,
+) -> OpenAICompatibleClient:
     config = ModelConfig(
         provider="openai_compatible",
         base_url="https://placeholder.invalid/v1",
@@ -54,6 +58,7 @@ def _client(http_client: _StubClient | None = None) -> OpenAICompatibleClient:
         temperature=0.0,
         max_tokens=64,
         timeout_s=1,
+        extra_body=extra_body,
     )
     return OpenAICompatibleClient(
         config,
@@ -209,6 +214,38 @@ def test_kindless_prebuilt_messages_still_supported() -> None:
 
     assert client._request_body({"messages": messages})["messages"] == messages
     assert client._request_body({"kind": None, "messages": messages})["messages"] == messages
+
+
+def test_extra_body_merged_into_request_body() -> None:
+    client = _client(extra_body={"thinking": {"type": "disabled"}})
+    messages = [{"role": "user", "content": "placeholder request"}]
+
+    assert client._request_body({"messages": messages}) == {
+        "model": "live-placeholder",
+        "messages": messages,
+        "temperature": 0.0,
+        "max_tokens": 64,
+        "thinking": {"type": "disabled"},
+    }
+
+
+def test_extra_body_contract_collision_rejected() -> None:
+    client = _client(extra_body={"messages": "override"})
+
+    with pytest.raises(ValueError, match="contract"):
+        client._request_body({"messages": [{"role": "user", "content": "placeholder request"}]})
+
+
+def test_extra_body_absent_leaves_body_unchanged() -> None:
+    client = _client()
+    messages = [{"role": "user", "content": "placeholder request"}]
+
+    assert client._request_body({"messages": messages}) == {
+        "model": "live-placeholder",
+        "messages": messages,
+        "temperature": 0.0,
+        "max_tokens": 64,
+    }
 
 
 def test_absent_provider_model_is_none_not_requested() -> None:
