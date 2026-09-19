@@ -139,6 +139,9 @@ class ExperimentResult(BaseModel):
     baseline_summaries: list[EvaluationSummary] = Field(default_factory=list)
     held_out_summaries: list[EvaluationSummary] = Field(default_factory=list)
     held_out_runs: list[RunRecord] = Field(default_factory=list)
+    runs: list[RunRecord] = Field(default_factory=list)
+    prompt_records: list[dict[str, Any]] = Field(default_factory=list)
+    skill_versions: list[Skill] = Field(default_factory=list)
     train_vs_held_out_lift: float | None = None
 
     @property
@@ -472,6 +475,7 @@ def evaluate_validation_gate(
     pricing: Mapping[str, Any] | None = None,
     config: Any | None = None,
     fixture_data: Mapping[str, Any] | None = None,
+    run_records: list[RunRecord] | None = None,
 ) -> PromotionDecision:
     """Evaluate parent and candidate on validation tasks, then apply the verdict.
 
@@ -520,6 +524,8 @@ def evaluate_validation_gate(
         config=config,
         fixture_data=fixture_data,
     )
+    if run_records is not None:
+        _extend_unique_runs(run_records, parent_collector.runs)
 
     candidate_collector = _RunCollector(store)
     candidate_summary = evaluate_condition(
@@ -540,6 +546,8 @@ def evaluate_validation_gate(
         config=config,
         fixture_data=fixture_data,
     )
+    if run_records is not None:
+        _extend_unique_runs(run_records, candidate_collector.runs)
 
     if policy is None:
         policy = _config_value(config, "promotion")
@@ -763,6 +771,7 @@ def ablate(
         "naive": _ablation_experiment_id(experiment_id, "naive") if store else experiment_id,
     }
     resolved_model = model or _config_model(_resolve_config(config))
+    evolution_tasks = [task for task in tasks if _split_value(task.split) is not Split.TEST]
     results: dict[str, ExperimentResult] = {}
     for mode, root in (
         ("verified", verified_skills_root),
@@ -770,7 +779,7 @@ def ablate(
     ):
         branch_model = _AblationModel(resolved_model, mode) if resolved_model is not None else None
         results[mode] = evolve(
-            tasks=tasks,
+            tasks=evolution_tasks,
             fixtures=fixtures,
             model=branch_model,
             agent_config=agent_config,
@@ -855,6 +864,11 @@ def evolve(
     while naive mode selects the candidate immediately.
     """
 
+    if any(_split_value(task.split) is Split.TEST for task in tasks):
+        raise ValueError(
+            "evolve receives training/validation tasks only; "
+            "test data is read exclusively by run_held_out"
+        )
     resolved_mode = _evolution_mode(mode)
     if generations < 1:
         raise ValueError("generations must be at least 1")
@@ -916,7 +930,7 @@ def evolve(
         skill_version=skill_version,
         skills_root=resolved_root,
     )
-    evolution_tasks = [task for task in tasks if _split_value(task.split) is not Split.TEST]
+    evolution_tasks = list(tasks)
     train_tasks = tasks_for_split(evolution_tasks, Split.TRAIN)
     resolved_task_inputs = (
         dict(task_inputs)
@@ -941,6 +955,9 @@ def evolve(
 
     generation_records: list[GenerationRecord] = []
     train_summaries: list[EvaluationSummary] = []
+    run_records: list[RunRecord] = []
+    prompt_records: list[dict[str, Any]] = []
+    skill_versions: dict[str, Skill] = {resolved_skill.version: resolved_skill}
 
     for generation in range(1, generations + 1):
         parent = resolved_skill
@@ -971,6 +988,7 @@ def evolve(
                 task_inputs=resolved_task_inputs,
             )
         except Exception as error:
+            _extend_unique_runs(run_records, train_collector.runs)
             generation_records.append(
                 _generation_error(
                     generation=generation,
@@ -981,6 +999,7 @@ def evolve(
             )
             continue
 
+        _extend_unique_runs(run_records, train_collector.runs)
         failure_ids = [packet.task_id for packet in failure_packets]
         prompt: dict[str, Any] | None = None
         capture = _MutationCaptureModel(resolved_model)
@@ -1011,6 +1030,14 @@ def evolve(
                 candidate.candidate_version,
             )
         except Exception as error:
+            if prompt is not None:
+                _append_prompt_record(
+                    prompt_records,
+                    generation=generation,
+                    candidate_id=candidate.candidate_id if candidate is not None else None,
+                    request=prompt,
+                    response=capture.response,
+                )
             if candidate is not None and store is not None:
                 _persist_candidate(
                     store=store,
@@ -1039,6 +1066,15 @@ def evolve(
                 )
             )
             continue
+
+        skill_versions[candidate_skill.version] = candidate_skill
+        _append_prompt_record(
+            prompt_records,
+            generation=generation,
+            candidate_id=candidate.candidate_id,
+            request=prompt,
+            response=capture.response,
+        )
 
         if resolved_mode == "naive":
             decision = PromotionDecision(
@@ -1089,13 +1125,16 @@ def evolve(
                 pricing=pricing,
                 config=resolved_config,
                 fixture_data=fixture_data,
+                run_records=run_records,
             )
+            materialized_candidate = load_skill(
+                resolved_root,
+                parent.name,
+                candidate.candidate_version,
+            )
+            skill_versions[materialized_candidate.version] = materialized_candidate
             if decision.decision is Decision.PROMOTE:
-                resolved_skill = load_skill(
-                    resolved_root,
-                    parent.name,
-                    candidate.candidate_version,
-                )
+                resolved_skill = materialized_candidate
                 mutation_status = MutationStatus.PROMOTED
             elif decision.decision is Decision.REJECT:
                 mutation_status = MutationStatus.REJECTED
@@ -1156,6 +1195,9 @@ def evolve(
         generations=generation_records,
         final_skill=resolved_skill,
         train_summaries=train_summaries,
+        runs=_sorted_unique_runs(run_records),
+        prompt_records=sorted(prompt_records, key=lambda record: record["generation"]),
+        skill_versions=_sorted_skills(skill_versions.values()),
     )
 
 
@@ -1190,6 +1232,65 @@ def _with_held_out(
             "train_vs_held_out_lift": train_vs_held_out_lift,
         }
     )
+
+
+def _append_prompt_record(
+    records: list[dict[str, Any]],
+    *,
+    generation: int,
+    candidate_id: str | None,
+    request: Mapping[str, Any],
+    response: Any,
+) -> None:
+    records.append(
+        {
+            "generation": generation,
+            "candidate_id": candidate_id,
+            "request": dict(request),
+            "response_content": _response_content(response),
+        }
+    )
+
+
+def _extend_unique_runs(
+    destination: list[RunRecord],
+    runs: Sequence[RunRecord],
+) -> None:
+    existing = {run.run_id for run in destination}
+    for run in runs:
+        if run.run_id not in existing:
+            destination.append(run)
+            existing.add(run.run_id)
+
+
+def _sorted_unique_runs(runs: Sequence[RunRecord]) -> list[RunRecord]:
+    unique: dict[str, RunRecord] = {}
+    for run in runs:
+        unique[run.run_id] = run
+    return sorted(
+        unique.values(),
+        key=lambda run: (
+            run.task_id,
+            run.skill_version or "",
+            run.condition_name.value,
+            run.run_slot,
+        ),
+    )
+
+
+def _sorted_skills(skills: Sequence[Skill]) -> list[Skill]:
+    unique = {skill.version: skill for skill in skills}
+    return sorted(unique.values(), key=lambda skill: int(skill.version[1:]))
+
+
+def _response_content(response: Any) -> str | None:
+    if isinstance(response, str):
+        return response
+    if isinstance(response, Mapping):
+        content = response.get("content")
+    else:
+        content = getattr(response, "content", None)
+    return content if isinstance(content, str) else None
 
 
 def _ablation_experiment_id(experiment_id: str, mode: str) -> str:

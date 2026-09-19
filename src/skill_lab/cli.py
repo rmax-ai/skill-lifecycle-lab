@@ -18,6 +18,7 @@ from skill_lab.data_validation import validate_operator_inputs
 from skill_lab.experiment import ablate as run_ablation
 from skill_lab.experiment import evaluate_condition
 from skill_lab.experiment import evolve as run_evolution
+from skill_lab.models import Split
 from skill_lab.reporting import write_artifact
 from skill_lab.skills import Skill, load_skill
 from skill_lab.storage import ExperimentStore
@@ -125,12 +126,13 @@ def evolve(
     output_path, experiment_id, _created_at = _experiment_output(settings.artifacts_root, output)
     model = create_chat_model(settings, allow_live=allow_live, env=os.environ)
     tasks = load_tasks(settings.dataset_path)
+    evolution_tasks = [task for task in tasks if task.split != Split.TEST]
     parent_skill = load_skill(settings.skills_root, skill, "v001")
     evolution_skills_root = output_path / "skills"
 
     with ExperimentStore(settings.database_path) as store:
         run_evolution(
-            tasks=tasks,
+            tasks=evolution_tasks,
             fixtures=settings.fixtures_path,
             model=model,
             agent_config=settings.agent,

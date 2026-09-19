@@ -2,10 +2,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from skill_lab.agent import AgentConfig
 from skill_lab.experiment import evolve
 from skill_lab.mock_model import ModelResponse, ScriptedMockModel
-from skill_lab.models import Decision, MutationStatus
+from skill_lab.models import Decision, MutationStatus, Split
 from skill_lab.promotion import PromotionPolicy
 from skill_lab.skills import load_skill
 from skill_lab.tasks import load_tasks
@@ -29,7 +31,7 @@ def _inputs() -> tuple[list[Any], dict[str, Any]]:
 def _evolve(tmp_path: Path, *, model: Any, mode: str, generations: int = 2) -> Any:
     tasks, fixtures = _inputs()
     return evolve(
-        tasks=tasks,
+        tasks=[task for task in tasks if task.split is not Split.TEST],
         fixtures=fixtures,
         model=model,
         agent_config=AgentConfig(max_steps=8, token_budget=2400),
@@ -78,6 +80,22 @@ class _TrainFailureCaptureModel:
                 latency_ms=1,
             )
         return self.delegate.complete(request)
+
+
+class _MutationExchangeModel:
+    model_id = "mock-incident-v1"
+
+    def __init__(self) -> None:
+        self.delegate = ScriptedMockModel(seed=1729)
+        self.requests: list[dict[str, Any]] = []
+        self.responses: list[str | None] = []
+
+    def complete(self, request: dict[str, Any]) -> ModelResponse:
+        response = self.delegate.complete(request)
+        if request.get("kind") == "mutation":
+            self.requests.append(request)
+            self.responses.append(response.content)
+        return response
 
 
 def test_verified_evolution_has_promote_and_reject(tmp_path: Path) -> None:
@@ -138,3 +156,67 @@ def test_only_train_failures_are_selected(tmp_path: Path) -> None:
     assert [packet["task_id"] for packet in packets] == ["IR-TR-01"]
     assert all(packet["task_id"].startswith("IR-TR-") for packet in packets)
     assert result.final_version == "v002"
+
+
+def test_experiment_result_carries_all_non_test_runs(tmp_path: Path) -> None:
+    result = _evolve(tmp_path, model=ScriptedMockModel(seed=1729), mode="verified")
+
+    assert result.runs
+    assert len(result.runs) == len({run.run_id for run in result.runs})
+    assert all(run.split in {Split.TRAIN, Split.VALIDATION} for run in result.runs)
+    assert all(run.split is not Split.TEST for run in result.runs)
+    run_keys = [
+        (run.task_id, run.skill_version or "", run.condition_name.value, run.run_slot)
+        for run in result.runs
+    ]
+    assert run_keys == sorted(
+        (run.task_id, run.skill_version or "", run.condition_name.value, run.run_slot)
+        for run in result.runs
+    )
+
+
+def test_mutation_exchanges_are_captured_verbatim(tmp_path: Path) -> None:
+    model = _MutationExchangeModel()
+
+    result = _evolve(tmp_path, model=model, mode="verified")
+
+    assert len(result.prompt_records) == 2
+    assert [record["generation"] for record in result.prompt_records] == [1, 2]
+    assert [record["request"] for record in result.prompt_records] == model.requests
+    assert [record["response_content"] for record in result.prompt_records] == model.responses
+    assert [record["candidate_id"] for record in result.prompt_records] == [
+        generation.candidate_id for generation in result.generations
+    ]
+
+
+def test_skill_lineage_retains_rejected_versions(tmp_path: Path) -> None:
+    result = _evolve(tmp_path, model=ScriptedMockModel(seed=1729), mode="verified")
+
+    assert [skill.version for skill in result.skill_versions] == ["v001", "v002", "v003"]
+    assert [skill.status for skill in result.skill_versions] == [
+        "baseline",
+        "promoted",
+        "rejected",
+    ]
+
+
+def test_evolve_refuses_test_tasks(tmp_path: Path) -> None:
+    tasks, fixtures = _inputs()
+
+    with pytest.raises(
+        ValueError,
+        match="evolve receives training/validation tasks only; test data is read exclusively by "
+        "run_held_out",
+    ):
+        evolve(
+            tasks=tasks,
+            fixtures=fixtures,
+            model=ScriptedMockModel(seed=1729),
+            agent_config=AgentConfig(max_steps=8, token_budget=2400),
+            experiment_id=EXPERIMENT_ID,
+            mode="naive",
+            generations=1,
+            runs_per_task=1,
+            parent_skill=load_skill(SKILLS, "incident-response", "v001"),
+            skills_root=tmp_path,
+        )
