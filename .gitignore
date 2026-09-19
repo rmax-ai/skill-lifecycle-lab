@@ -21,5 +21,9 @@ venv/
 .serena/
 .hermes/
 
+# Experiment outputs (regenerable; the committed example lives in artifacts/example-mock/)
+artifacts/experiment-*/
+artifacts/*.sqlite3
+
 # OS
 .DS_Store

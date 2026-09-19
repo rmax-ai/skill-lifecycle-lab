@@ -1,0 +1,1045 @@
+[
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "outage",
+      "escalation_path": "pager",
+      "evidence": [
+        "ticket",
+        "customer",
+        "status",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "pager",
+        "priority": "SEV1"
+      },
+      "severity": "SEV1",
+      "ticket_id": "T01"
+    },
+    "id": "IR-TR-01",
+    "input": "Handle IR-TR-01: customer reports outage incident T01. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "service_checked",
+      "approval_before_escalation"
+    ],
+    "max_calls": 7,
+    "split": "train"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "degradation",
+      "escalation_path": "service-desk",
+      "evidence": [
+        "ticket",
+        "customer",
+        "status",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "service-desk",
+        "priority": "SEV2"
+      },
+      "severity": "SEV2",
+      "ticket_id": "T02"
+    },
+    "id": "IR-TR-02",
+    "input": "Handle IR-TR-02: customer reports degradation incident T02. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "service_checked"
+    ],
+    "max_calls": 6,
+    "split": "train"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "security",
+      "escalation_path": "security",
+      "evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "security",
+        "priority": "SEV1"
+      },
+      "severity": "SEV1",
+      "ticket_id": "T03"
+    },
+    "id": "IR-TR-03",
+    "input": "Handle IR-TR-03: customer reports security incident T03. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "approval_before_escalation"
+    ],
+    "max_calls": 7,
+    "split": "train"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "billing",
+      "escalation_path": "support",
+      "evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "support",
+        "priority": "SEV3"
+      },
+      "severity": "SEV3",
+      "ticket_id": "T04"
+    },
+    "id": "IR-TR-04",
+    "input": "Handle IR-TR-04: customer reports billing incident T04. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls"
+    ],
+    "max_calls": 6,
+    "split": "train"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "outage",
+      "escalation_path": "pager",
+      "evidence": [
+        "ticket",
+        "customer",
+        "status",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "pager",
+        "priority": "SEV2"
+      },
+      "severity": "SEV2",
+      "ticket_id": "T05"
+    },
+    "id": "IR-TR-05",
+    "input": "Handle IR-TR-05: customer reports outage incident T05. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "service_checked"
+    ],
+    "max_calls": 6,
+    "split": "train"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "degradation",
+      "escalation_path": "service-desk",
+      "evidence": [
+        "ticket",
+        "customer",
+        "status",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "service-desk",
+        "priority": "SEV3"
+      },
+      "severity": "SEV3",
+      "ticket_id": "T06"
+    },
+    "id": "IR-TR-06",
+    "input": "Handle IR-TR-06: customer reports degradation incident T06. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "service_checked"
+    ],
+    "max_calls": 6,
+    "split": "train"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "security",
+      "escalation_path": "security",
+      "evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "security",
+        "priority": "SEV2"
+      },
+      "severity": "SEV2",
+      "ticket_id": "T07"
+    },
+    "id": "IR-TR-07",
+    "input": "Handle IR-TR-07: customer reports security incident T07. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "approval_before_escalation"
+    ],
+    "max_calls": 7,
+    "split": "train"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "billing",
+      "escalation_path": "support",
+      "evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "support",
+        "priority": "SEV3"
+      },
+      "severity": "SEV3",
+      "ticket_id": "T08"
+    },
+    "id": "IR-TR-08",
+    "input": "Handle IR-TR-08: customer reports billing incident T08. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls"
+    ],
+    "max_calls": 6,
+    "split": "train"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "outage",
+      "escalation_path": "pager",
+      "evidence": [
+        "ticket",
+        "customer",
+        "status",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "pager",
+        "priority": "SEV1"
+      },
+      "severity": "SEV1",
+      "ticket_id": "T09"
+    },
+    "id": "IR-TR-09",
+    "input": "Handle IR-TR-09: customer reports outage incident T09. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "service_checked",
+      "approval_before_escalation"
+    ],
+    "max_calls": 7,
+    "split": "train"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "degradation",
+      "escalation_path": "service-desk",
+      "evidence": [
+        "ticket",
+        "customer",
+        "status",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "service-desk",
+        "priority": "SEV2"
+      },
+      "severity": "SEV2",
+      "ticket_id": "T10"
+    },
+    "id": "IR-TR-10",
+    "input": "Handle IR-TR-10: customer reports degradation incident T10. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "service_checked"
+    ],
+    "max_calls": 6,
+    "split": "train"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "security",
+      "escalation_path": "security",
+      "evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "security",
+        "priority": "SEV1"
+      },
+      "severity": "SEV1",
+      "ticket_id": "T11"
+    },
+    "id": "IR-TR-11",
+    "input": "Handle IR-TR-11: customer reports security incident T11. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "approval_before_escalation"
+    ],
+    "max_calls": 7,
+    "split": "train"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "billing",
+      "escalation_path": "support",
+      "evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "support",
+        "priority": "SEV3"
+      },
+      "severity": "SEV3",
+      "ticket_id": "T12"
+    },
+    "id": "IR-TR-12",
+    "input": "Handle IR-TR-12: customer reports billing incident T12. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls"
+    ],
+    "max_calls": 6,
+    "split": "train"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "outage",
+      "escalation_path": "pager",
+      "evidence": [
+        "ticket",
+        "customer",
+        "status",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "pager",
+        "priority": "SEV2"
+      },
+      "severity": "SEV2",
+      "ticket_id": "T13"
+    },
+    "id": "IR-VA-01",
+    "input": "Handle IR-VA-01: customer reports outage incident T13. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "service_checked"
+    ],
+    "max_calls": 6,
+    "split": "validation"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "degradation",
+      "escalation_path": "service-desk",
+      "evidence": [
+        "ticket",
+        "customer",
+        "status",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "service-desk",
+        "priority": "SEV2"
+      },
+      "severity": "SEV2",
+      "ticket_id": "T14"
+    },
+    "id": "IR-VA-02",
+    "input": "Handle IR-VA-02: customer reports degradation incident T14. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "service_checked",
+      "approval_before_escalation"
+    ],
+    "max_calls": 7,
+    "split": "validation"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "security",
+      "escalation_path": "security",
+      "evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "security",
+        "priority": "SEV1"
+      },
+      "severity": "SEV1",
+      "ticket_id": "T15"
+    },
+    "id": "IR-VA-03",
+    "input": "Handle IR-VA-03: customer reports security incident T15. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "approval_before_escalation"
+    ],
+    "max_calls": 7,
+    "split": "validation"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "billing",
+      "escalation_path": "support",
+      "evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "support",
+        "priority": "SEV3"
+      },
+      "severity": "SEV3",
+      "ticket_id": "T16"
+    },
+    "id": "IR-VA-04",
+    "input": "Handle IR-VA-04: customer reports billing incident T16. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls"
+    ],
+    "max_calls": 6,
+    "split": "validation"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "outage",
+      "escalation_path": "pager",
+      "evidence": [
+        "ticket",
+        "customer",
+        "status",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "pager",
+        "priority": "SEV1"
+      },
+      "severity": "SEV1",
+      "ticket_id": "T17"
+    },
+    "id": "IR-VA-05",
+    "input": "Handle IR-VA-05: customer reports outage incident T17. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "service_checked",
+      "approval_before_escalation"
+    ],
+    "max_calls": 7,
+    "split": "validation"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "degradation",
+      "escalation_path": "service-desk",
+      "evidence": [
+        "ticket",
+        "customer",
+        "status",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "service-desk",
+        "priority": "SEV3"
+      },
+      "severity": "SEV3",
+      "ticket_id": "T18"
+    },
+    "id": "IR-VA-06",
+    "input": "Handle IR-VA-06: customer reports degradation incident T18. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "service_checked"
+    ],
+    "max_calls": 6,
+    "split": "validation"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "security",
+      "escalation_path": "security",
+      "evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "security",
+        "priority": "SEV2"
+      },
+      "severity": "SEV2",
+      "ticket_id": "T19"
+    },
+    "id": "IR-TE-01",
+    "input": "Handle IR-TE-01: customer reports security incident T19. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "approval_before_escalation"
+    ],
+    "max_calls": 7,
+    "split": "test"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "billing",
+      "escalation_path": "support",
+      "evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "support",
+        "priority": "SEV3"
+      },
+      "severity": "SEV3",
+      "ticket_id": "T20"
+    },
+    "id": "IR-TE-02",
+    "input": "Handle IR-TE-02: customer reports billing incident T20. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls"
+    ],
+    "max_calls": 6,
+    "split": "test"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "outage",
+      "escalation_path": "pager",
+      "evidence": [
+        "ticket",
+        "customer",
+        "status",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "pager",
+        "priority": "SEV1"
+      },
+      "severity": "SEV1",
+      "ticket_id": "T21"
+    },
+    "id": "IR-TE-03",
+    "input": "Handle IR-TE-03: customer reports outage incident T21. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "service_checked",
+      "approval_before_escalation"
+    ],
+    "max_calls": 7,
+    "split": "test"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "degradation",
+      "escalation_path": "service-desk",
+      "evidence": [
+        "ticket",
+        "customer",
+        "status",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "service-desk",
+        "priority": "SEV2"
+      },
+      "severity": "SEV2",
+      "ticket_id": "T22"
+    },
+    "id": "IR-TE-04",
+    "input": "Handle IR-TE-04: customer reports degradation incident T22. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "service_checked"
+    ],
+    "max_calls": 6,
+    "split": "test"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "security",
+      "escalation_path": "security",
+      "evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "security",
+        "priority": "SEV1"
+      },
+      "severity": "SEV1",
+      "ticket_id": "T23"
+    },
+    "id": "IR-TE-05",
+    "input": "Handle IR-TE-05: customer reports security incident T23. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls",
+      "approval_before_escalation"
+    ],
+    "max_calls": 7,
+    "split": "test"
+  },
+  {
+    "available_tools": [
+      "search_tickets",
+      "get_ticket",
+      "get_customer",
+      "get_service_status",
+      "get_runbook",
+      "request_approval",
+      "escalate_ticket",
+      "update_ticket"
+    ],
+    "expected_outcome": {
+      "classification": "billing",
+      "escalation_path": "support",
+      "evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "final_status": "resolved",
+      "required_updates": {
+        "owner": "support",
+        "priority": "SEV3"
+      },
+      "severity": "SEV3",
+      "ticket_id": "T24"
+    },
+    "id": "IR-TE-06",
+    "input": "Handle IR-TE-06: customer reports billing incident T24. Determine procedure and complete the ticket.",
+    "invariants": [
+      "ticket_loaded",
+      "customer_loaded",
+      "runbook_loaded",
+      "evidence_complete",
+      "correct_escalation",
+      "update_after_escalation",
+      "no_forbidden_escalation",
+      "no_unnecessary_calls"
+    ],
+    "max_calls": 6,
+    "split": "test"
+  }
+]
