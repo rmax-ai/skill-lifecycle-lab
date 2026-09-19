@@ -14,6 +14,7 @@ from skill_lab.mutation import (
     select_train_failures,
 )
 from skill_lab.skills import Skill, load_skill
+from skill_lab.storage import ExperimentStore
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
@@ -169,3 +170,42 @@ def test_mutation_cannot_write_skill_status() -> None:
     assert candidate.status is MutationStatus.PROPOSED
     assert skill.status == "baseline"
     assert skill.metadata.model_dump(mode="json") == original_metadata
+
+
+def test_stored_rows_do_not_feed_mutation(tmp_path: Path) -> None:
+    run = _run("IR-TR-01", 0, False).model_copy(
+        update={
+            "trajectory": _packet("IR-TR-01").trajectory.model_copy(
+                update={
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "Handle IR-TR-01. POISON-VALIDATION",
+                        }
+                    ]
+                }
+            )
+        }
+    )
+    with ExperimentStore(tmp_path / "evidence.sqlite3") as store:
+        store.insert_experiment(
+            experiment_id=EXPERIMENT_ID,
+            created_at="2000-01-01T00:00:00.000Z",
+            mode="verified",
+            config_json={},
+            git_commit="placeholder",
+            dataset_sha256="placeholder",
+            model_id="placeholder-model",
+            seed=1729,
+            runs_per_task=1,
+            status="running",
+        )
+        store.insert_run(run)
+        stored_runs = store.list_runs(EXPERIMENT_ID)
+
+    assert "POISON-VALIDATION" in json.dumps(
+        stored_runs[0].trajectory.model_dump(mode="json"),
+        sort_keys=True,
+    )
+    with pytest.raises(ValueError, match="validation or test evidence"):
+        select_train_failures(stored_runs)
