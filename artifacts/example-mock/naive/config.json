@@ -1,0 +1,12 @@
+{
+  "artifact_schema": "skill-lab-artifact-v1",
+  "experiment_id": "exp-20000101T000000Z-deadbeef",
+  "final_skill": {
+    "generation": 2,
+    "name": "incident-response",
+    "status": "naive_replaced",
+    "version": "v003"
+  },
+  "generation_count": 2,
+  "mode": "naive"
+}

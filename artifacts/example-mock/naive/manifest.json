@@ -1,0 +1,42 @@
+{
+  "artifact_schema": "skill-lab-artifact-v1",
+  "experiment_id": "exp-20000101T000000Z-deadbeef",
+  "files": {
+    "config.json": {
+      "sha256": "dd0e7db0e3d0d02cf83113177842833bad540f622141f79c9629f8150365e605",
+      "size": 277
+    },
+    "generations.json": {
+      "sha256": "94657510642e488ca5ab642fea942e9e674d71ac4f963889610a217fd2d5d72b",
+      "size": 865
+    },
+    "prompts.jsonl": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "report.md": {
+      "sha256": "013e0dd215e214c2a4833cd69eb6888bca60096a7b38edd964bae6ed4bad4603",
+      "size": 2311
+    },
+    "results.csv": {
+      "sha256": "822f7c5c44a444d654becf3b0666e877ece4ccd28960b0d54df1c5fb302d15e6",
+      "size": 2008
+    },
+    "skills/incident-response/v003/RATIONALE.md": {
+      "sha256": "d04689eced95669119fac0bce8ea4ba95c025a0c282c486212b04f62a2a0093c",
+      "size": 116
+    },
+    "skills/incident-response/v003/SKILL.md": {
+      "sha256": "4a7957611bd1ee12384c424ecfef0123dda718377cd4c52e050e956f9c197f7e",
+      "size": 833
+    },
+    "skills/incident-response/v003/metadata.json": {
+      "sha256": "698874a82018eb0cb68f8b6fc631e02e01c83b625e095e3b203c62ad5afaadff",
+      "size": 100
+    },
+    "trajectories.jsonl": {
+      "sha256": "9903c7f9120a962717ad5be564d67d91b907e134d16669387804757c35bd12e7",
+      "size": 121474
+    }
+  }
+}

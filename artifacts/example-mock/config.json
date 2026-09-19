@@ -1,0 +1,52 @@
+{
+  "artifact_kind": "ablation",
+  "artifact_schema": "skill-lab-artifact-v1",
+  "branches": {
+    "naive": {
+      "experiment_id": "exp-20000101T000000Z-deadbeef",
+      "path": "naive"
+    },
+    "verified": {
+      "experiment_id": "exp-20000101T000000Z-deadbeef",
+      "path": "."
+    }
+  },
+  "command": {
+    "generations": 2,
+    "runs_per_task": 1,
+    "skill": "incident-response"
+  },
+  "configuration": {
+    "agent": {
+      "max_steps": 8,
+      "token_budget": 2400
+    },
+    "artifacts_root": "artifacts",
+    "database_path": "artifacts/experiments.sqlite3",
+    "dataset_path": "datasets/incident_tasks.json",
+    "fixtures_path": "datasets/tool_world.json",
+    "model": {
+      "api_key_env": "SKILL_LAB_API_KEY",
+      "base_url": "http://localhost:8000/v1",
+      "max_tokens": 800,
+      "model": "mock-incident-v1",
+      "provider": "mock",
+      "temperature": 0.0,
+      "timeout_s": 30.0
+    },
+    "pricing": {
+      "mock-incident-v1": {
+        "input_per_million_usd": 0.0,
+        "output_per_million_usd": 0.0
+      }
+    },
+    "promotion": {
+      "cost_tolerance": 1.1,
+      "regression_threshold": 0.0
+    },
+    "seed": 1729,
+    "skills_root": "skills"
+  },
+  "experiment_id": "exp-20000101T000000Z-deadbeef",
+  "mode": "ablation"
+}

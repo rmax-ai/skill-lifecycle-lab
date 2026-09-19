@@ -1,0 +1,34 @@
+{
+  "experiment_id": "exp-20000101T000000Z-deadbeef",
+  "generations": [
+    {
+      "candidate_version": "v002",
+      "decision": "naive_replace",
+      "evidence": {
+        "candidate_id": "cand-5ac82e2f5bed"
+      },
+      "generation": 1,
+      "mutation_status": "naive_replaced",
+      "parent_version": "v001",
+      "reason_codes": [],
+      "train_failure_task_ids": [],
+      "validation_candidate": null,
+      "validation_parent": null
+    },
+    {
+      "candidate_version": "v003",
+      "decision": "naive_replace",
+      "evidence": {
+        "candidate_id": "cand-65af62a1c5e1"
+      },
+      "generation": 2,
+      "mutation_status": "naive_replaced",
+      "parent_version": "v002",
+      "reason_codes": [],
+      "train_failure_task_ids": [],
+      "validation_candidate": null,
+      "validation_parent": null
+    }
+  ],
+  "mode": "naive"
+}
