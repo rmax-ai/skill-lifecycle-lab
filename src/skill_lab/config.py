@@ -182,15 +182,14 @@ class OpenAICompatibleClient:
         """Send one agent request to the OpenAI-compatible chat endpoint."""
 
         request_body = self._request_body(request)
+        started_at = time.monotonic()
         attempt = 0
         while True:
             try:
-                started_at = time.monotonic()
                 response = self._client.post(
                     f"{self._base_url}/chat/completions",
                     json=request_body,
                 )
-                latency_ms = max(0, int(round((time.monotonic() - started_at) * 1000)))
                 status_code = _response_status_code(response)
                 if _is_retryable_status(status_code):
                     if _sleep_before_retry(attempt):
@@ -247,6 +246,7 @@ class OpenAICompatibleClient:
                 if not isinstance(model, str) or not model:
                     model = None
 
+                latency_ms = max(0, int(round((time.monotonic() - started_at) * 1000)))
                 return ModelResponse(
                     model=model,
                     content=content,

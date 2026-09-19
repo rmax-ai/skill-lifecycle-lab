@@ -400,6 +400,55 @@ def test_transient_http_errors_retried_with_bounded_backoff(
     assert sleeps == [1, 3]
 
 
+def test_retry_latency_includes_all_attempts_and_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = _SequenceClient(
+        [
+            _StubResponse(status_code=503),
+            _StubResponse(status_code=503),
+            _StubResponse(),
+        ]
+    )
+    client = _client(transport)
+    now = [100.0]
+    attempt_durations = iter((2.0, 3.0, 4.0))
+    inter_attempt_intervals = iter((4.0, 3.0))
+    original_post = transport.post
+
+    def post_with_elapsed_time(url: str, *, json: dict[str, Any]) -> _StubResponse:
+        if transport.posts:
+            now[0] += next(inter_attempt_intervals)
+        now[0] += next(attempt_durations)
+        return original_post(url, json=json)
+
+    monkeypatch.setattr(transport, "post", post_with_elapsed_time)
+    monkeypatch.setattr("skill_lab.config.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("skill_lab.config.time.sleep", lambda _seconds: None)
+
+    response = client.complete({"messages": [{"role": "user", "content": "placeholder request"}]})
+
+    assert response.latency_ms == 16_000
+    assert response.latency_ms != 4_000
+
+    no_retry_transport = _StubClient()
+    no_retry_client = _client(no_retry_transport)
+    now[0] = 20.0
+    monkeypatch.setattr("skill_lab.config.time.monotonic", lambda: now[0])
+    original_no_retry_post = no_retry_transport.post
+
+    def no_retry_post(url: str, *, json: dict[str, Any]) -> _StubResponse:
+        now[0] += 4.0
+        return original_no_retry_post(url, json=json)
+
+    monkeypatch.setattr(no_retry_transport, "post", no_retry_post)
+    no_retry_response = no_retry_client.complete(
+        {"messages": [{"role": "user", "content": "placeholder request"}]}
+    )
+
+    assert no_retry_response.latency_ms == 4_000
+
+
 def test_empty_content_retried_then_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     transport = _SequenceClient(
         [
