@@ -577,3 +577,160 @@ Recorded here so the contract remains self-contained; these resolve internal inc
 - **M-2 — `approval_required` semantics.** Runbook-level `approval_required` is true iff the service has ≥1 approval=yes task (S-CORE true, S-AUTH true, S-BILL false); the per-ticket approval authority is `customer.approval_required` (= matrix value). The original "approval according to customer" note lacked this precision and any strict per-task comparison of the runbook field is invalid for mixed services.
 - **M-3 — Board numbering.** Dependabot PR #1 consumed issue number 1 at repo creation: epics are #2–#7, cards B01–B22 are #8–#29. `PLAN.md` §4's predicted numbering assumed a clean start; the GitHub board (labels) is the operational truth. Card issues #8–#29 reference this the same way.
 
+## §10 Integrity remediation (post-review amendment, 2026-09-19)
+
+Source: adversarial integrity review 1 (`docs/reviews/integrity-review-1.md`) ran on commit `8f4f5b0` and returned FIX-FIRST with 2 blockers and 7 major findings. This section freezes the remediation contracts and cards B23–B31 (epic E7). All §10 cards obey the same batch discipline as §3. No existing named test may be deleted or renamed; suite counts grow per card and each batch reports its exact count. §5's fixed expected count is superseded by this section; the operative rules remain "never delete/rename named tests" and "report exact counts".
+
+### Frozen contract amendments
+
+- **A-1 Live serialization.** The OpenAI-compatible client serializes by request `kind`. Agent requests must yield messages conveying: the exact single-JSON-object action protocol (`{"action":"tool","tool":<name>,"arguments":{...}}` or `{"action":"final","output":{...}}`, no prose, no code fences), the tool names and argument names from `skill_lab.tools._TOOL_ARGUMENTS` for the task's `available_tools`, the task call budget (`max_calls`), the optional skill markdown, the task input string, and the recorded tool history as replayed assistant/tool messages; the task envelope's answer fields (`expected_outcome`, `invariants`, `split`) must never appear in any message. Mutation requests must yield the mutation instruction (respond with exactly four string fields: `failure_analysis`, `procedural_change`, `candidate_markdown`, `rationale`; complete SKILL.md inside `candidate_markdown`; no task identifiers or validation/test evidence) plus the exact `current_skill` + `train_failures` envelope content, canonically serialized. Unknown request shapes raise ValueError; emitting empty-content requests is forbidden. `latency_ms` is measured with a monotonic clock and is observed metadata only (never a comparison input; mock stays 0).
+- **A-2 Token accounting.** A model response's supplied `total_tokens` must equal `input_tokens + output_tokens` or the run fails loudly (MODEL_ERROR path); the total is never trusted over its components.
+- **A-3 Response model metadata.** Every `RunRecord` persists `model_id` (observed response model ids, sorted-unique, joined by `|`; None when unavailable). Provider routing variance must be visible in artifacts.
+- **A-4 Result completeness.** `ExperimentResult` carries `runs` (every non-test run executed during evolution, deduped by `run_id`), `prompt_records` (one entry per mutation attempt: `generation`, `candidate_id`, exact `request`, exact `response_content`), and `skill_versions` (every materialized version incl. rejected, in version order). `write_artifact` serializes all of it; `prompts.jsonl` is exact and non-empty for any run with mutations.
+- **A-5 Bundle durability.** `evolve` and `baseline` write durable bundles (`config.json` + evidence files + skills + `manifest.json`) before printing `artifact_path`. `held-out --experiment DIR [--runs-per-task N] [--allow-live]` (frozen CLI list §2) evaluates no-skill/seed/final on the bundle's untouched test set and writes an additive `held-out/` subtree without mutating parent files; parent manifests and tree comparisons treat the top-level `held-out/` directory as additive. Before any temporary state is deleted, the harness asserts evidence completeness and refuses to publish otherwise.
+- **A-6 Frozen inputs.** Every bundle freezes its task dataset and fixture world under `inputs/` with sha256 digests in `config.inputs`; `rerun` and `held-out` verify all hashes (manifest + `config.inputs`) before any model is created and regenerate from the frozen copies.
+- **A-7 Finite metrics.** Non-finite floats are rejected at model construction for every metric/threshold field; the promotion gate additionally treats any non-finite participant metric as INCONCLUSIVE (§8 semantics).
+- **A-8 Leakage boundary.** `evolve` accepts training/validation tasks only and raises on any test task; test-split tasks are read exclusively by `run_held_out` / `held-out`, after both ablation branches finish. Poison-boundary tests must cover input, expected_outcome, invariants, trajectories, and store rows, and assert absence from failure packets, mutation prompts/requests/responses, candidate markdown, and persisted mutation rows.
+- **A-9 Rerun dispatch.** `rerun` dispatches on `config.artifact_kind` (`ablation` | `evolution`), regenerating the same computation from frozen inputs and byte-comparing trees modulo the additive `held-out/` subtree.
+
+### Remediation cards
+
+#### B23 — Live model serialization for agent and mutation envelopes
+Epic: E7
+Goal: Make the live OpenAI-compatible path serialize the exact experiment contracts (agent protocol + tool schemas; mutation skill + failures) and measure request latency.
+FILE allowlist (2): `src/skill_lab/config.py`; `tests/test_live_client.py`
+- Implement §10 A-1. `_request_body` dispatches on `request.get("kind")`: `"agent"` builds agent messages; `"mutation"` builds mutation messages; any other shape without a prebuilt `messages` list raises ValueError (never emit empty content).
+- Agent messages: system message with the action protocol (single JSON object; `{"action":"tool","tool":<name>,"arguments":{...}}` or `{"action":"final","output":{...}}`; no prose or code fences), the `available_tools` names with their argument names imported from `skill_lab.tools._TOOL_ARGUMENTS` (no duplication of the table), and the task `max_calls` budget; the skill markdown when present; user message with the task `input` string only; then for each `tool_history` entry an assistant message carrying the reconstructed tool action JSON and a tool message carrying the recorded result JSON, so a stateless replay sees the same history. `expected_outcome`, `invariants`, and `split` must not appear anywhere in the messages.
+- Mutation messages: system message with the four-field response instruction (§10 A-1); user message with the canonical (`sort_keys=True`) `current_skill` + `train_failures` envelope content verbatim.
+- `complete()`: measure elapsed wall time with `time.monotonic()` around the HTTP request and return `latency_ms` as a non-negative int (rounded). Mock behavior unchanged.
+- Tests must construct the client without network (stub transport object for `complete()`; direct `_request_body` calls for serialization); assert identical input dict yields identical messages twice; live tests use a monkeypatched clock to prove latency is measured.
+Test spec: hermetic, no network; no changes to mock code.
+Named tests: `test_agent_request_messages_include_protocol_tools_and_history`; `test_agent_request_never_leaks_answer_fields`; `test_mutation_request_messages_include_skill_and_failures`; `test_unknown_request_kind_is_rejected`; `test_latency_is_measured_with_monotonic_clock`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_live_client.py`
+Dependencies: B22
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+#### B24 — Token accounting and response model identity
+Epic: E7
+Goal: Derive-or-reject response totals; persist observed response model id per run; keep storage schema consistent.
+FILE allowlist (6): `src/skill_lab/models.py`; `src/skill_lab/agent.py`; `src/skill_lab/experiment.py`; `src/skill_lab/storage.py`; `tests/test_usage_accounting.py`; `tests/test_storage.py`
+- Implement §10 A-2: in `_response_values`, when a response supplies `total_tokens` it must equal `input_tokens + output_tokens` (else ValueError, which the agent loop records as MODEL_ERROR); when missing, derive from components.
+- Implement §10 A-3: add `model_id: str | None = None` to `RunRecord`; in `_evaluate_slot` populate it from the captured `_Usage` model ids (sorted-unique, joined by `|`; None when empty).
+- Storage: add a `model_id TEXT` column to the `runs` table with an idempotent migration for pre-existing database files (add the column at init when missing; keep `CREATE TABLE IF NOT EXISTS` semantics) and include it in `insert_run`.
+- Tests: new `tests/test_usage_accounting.py` with `test_total_tokens_must_equal_components` (mismatch rejected; match accepted; missing total derived), `test_evaluate_slot_persists_response_model` (stub usage capture), `test_run_record_model_id_round_trip`; update `tests/test_storage.py` only where its column assertions require the new column.
+Test spec: hermetic; no behavior change for consistent totals.
+Named tests: `test_total_tokens_must_equal_components`; `test_evaluate_slot_persists_response_model`; `test_run_record_model_id_round_trip`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_usage_accounting.py tests/test_storage.py`
+Dependencies: B23
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+#### B25 — Complete evolution evidence in results; evolve test-task guard
+Epic: E7
+Goal: Carry every run, exact mutation exchange, and every skill version into the result; `evolve` refuses test tasks; callers pass non-test corpora.
+FILE allowlist (4): `src/skill_lab/experiment.py`; `src/skill_lab/cli.py`; `tests/test_evolution.py`; `tests/test_cli_evolve.py`
+- Implement §10 A-4: `ExperimentResult` gains `runs: list[RunRecord] = []` (all train- and validation-phase runs, deduped by `run_id`, sorted by `(task_id, skill_version or "", condition_name, run_slot)`), `prompt_records: list[dict] = []` (one entry per mutation attempt: `generation`, `candidate_id`, `request` = exact built mutation prompt, `response_content` = exact response content string or null; ordered by generation), `skill_versions: list[Skill] = []` (seed plus every version materialized under the skills root incl. rejected, deduped, sorted by version number).
+- Capture validation-phase runs: extend `evaluate_validation_gate` with the same optional `run_records` out-parameter pattern `run_held_out` uses; parent and candidate validation runs are captured exactly once (dedupe by `run_id`).
+- Implement §10 A-8's guard: `evolve` raises ValueError when any supplied task has split TEST ("evolve receives training/validation tasks only; test data is read exclusively by run_held_out"). `ablate` computes the non-test corpus once and passes it to both branches; the CLI `evolve` command passes its own filtered list. Test corpus handling stays in `ablate`/`held-out` paths only.
+- Keep existing records/fields and all existing tests' semantics; naive mode collects the same evidence.
+Test spec: hermetic mock; rejections and generation-errors remain preserved.
+Named tests: `test_experiment_result_carries_all_non_test_runs`; `test_mutation_exchanges_are_captured_verbatim`; `test_skill_lineage_retains_rejected_versions`; `test_evolve_refuses_test_tasks`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_evolution.py tests/test_held_out.py tests/test_cli_evolve.py`
+Dependencies: B24
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+#### B26 — Artifact export completeness and report fixes
+Epic: E7
+Goal: `write_artifact` serializes everything the result carries; held-out rows stop duplicating; conclusions reflect supplied evidence.
+FILE allowlist (3): `src/skill_lab/reporting.py`; `tests/test_reporting.py`; `tests/test_cli_artifacts.py`
+- `_run_records`: union `result.runs` + `result.held_out_runs`, dedupe by `run_id`, deterministic order; results.csv gains a `model_id` column (from `RunRecord.model_id`, empty string when None).
+- `prompts.jsonl`: emit one canonical line per `prompt_records` entry (exact request + response content); non-empty whenever mutations ran.
+- `skills/`: write every version in `result.skill_versions` (plus the final skill if absent), each under `skills/<name>/<version>/` with `SKILL.md`, `metadata.json`, and `RATIONALE.md` when a rationale exists; deterministic order.
+- Fix the held-out duplication: report sections read canonical fields only (`train_summaries`, `baseline_summaries`, `held_out_summaries`) — no alias concatenation. Test exact row counts.
+- Condition the held-out interpretation bullet on actual held-out presence (observed counts when present; "unavailable" wording only when absent); keep the descriptive-not-causal and mock caveats always.
+- Add an observed line: `Observed prompt records: N`.
+- Manifest continues to cover all written files (verify by test).
+Test spec: hermetic; exact CSV header/row assertions updated deliberately.
+Named tests: `test_results_csv_includes_all_runs_once`; `test_prompts_jsonl_contains_exact_exchange`; `test_skill_lineage_versions_written`; `test_held_out_rows_not_duplicated`; `test_conclusion_reflects_supplied_held_out`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_reporting.py tests/test_cli_artifacts.py`
+Dependencies: B25
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+#### B27 — Durable evolve/baseline bundles, evidence assertions, rerun dispatch
+Epic: E7
+Goal: `evolve`/`baseline` write durable bundles; completeness assertions run before temp cleanup; `rerun` dispatches on artifact kind.
+FILE allowlist (4): `src/skill_lab/cli.py`; `src/skill_lab/reporting.py`; `tests/test_cli_bundles.py`; `tests/test_cli_evolve.py`
+- Implement §10 A-5: the `evolve` command captures its `ExperimentResult`, then writes a durable bundle: `write_artifact(result, output_path)`, seed-skill copy, bundle `config.json` (`artifact_kind: "evolution"`, `command` {skill, generations, runs_per_task, mode}, `configuration`, `experiment_id`, `branches` {mode: {path, final_version, model_id}}), bundle `manifest.json`. `baseline` writes a durable bundle with `artifact_kind: "baseline"` (config + `results.csv` + `trajectories.jsonl` from collected runs + manifest); collect runs via the existing `_RunCollector` pattern. Add a small public `reporting.write_runs_files(runs, root)` helper (same columns/format as `write_artifact`) reused by `baseline`.
+- Ablation bundle config: add `final_version` and `model_id` to each branch entry.
+- Completeness assertions in `_run_ablation_artifact` before the temporary directory is deleted: for each branch — every generation record with a `candidate_version` has a matching skill in `skill_versions`; one `prompt_record` per proposed candidate; verified-mode gated candidates have parent+candidate validation runs in `runs`. On failure raise ValueError (refuse to publish) — never silent retry.
+- Implement §10 A-9: `rerun` reads `artifact_kind`; `"ablation"` keeps current behavior; `"evolution"` regenerates via a shared `_run_evolution_artifact` helper used by both the `evolve` command and rerun. Tree comparison ignores top-level `held-out/` (documented additive zone).
+Test spec: hermetic mock; temp roots; existing evolve CLI tests preserved.
+Named tests: `test_evolve_writes_durable_bundle`; `test_baseline_writes_durable_bundle`; `test_bundle_manifest_covers_all_files`; `test_rerun_dispatches_evolution_kind`; `test_ablation_refuses_incomplete_evidence`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_cli_bundles.py tests/test_cli_evolve.py`
+Dependencies: B26
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+#### B28 — Held-out command
+Epic: E7
+Goal: Implement the frozen `held-out --experiment DIR [--runs-per-task N] [--allow-live]` gate as an additive subtree.
+FILE allowlist (2): `src/skill_lab/cli.py`; `tests/test_cli_held_out.py`
+- Implement §10 A-5's held-out command: load bundle `config.json` (`artifact_kind` `"ablation"` or `"evolution"`; exit 2 otherwise), verify the manifest and frozen-input hashes BEFORE any model is created (no `create_chat_model` call on failure), honor the live-provider gate, then for each branch load the seed (`skills/<skill>/v001`) and final (`skills/<skill>/<final_version>`) skills and run `run_held_out` over the untouched test set with the requested `--runs-per-task` (default 1).
+- Write `DIR/held-out/`: `config.json` (artifact_kind `"held-out"`, parent experiment id, runs_per_task, per-branch {experiment_id, final_version, conditions}, model id), `held-out.json` (per-branch summaries), `results.csv` (per-run rows incl. a `mode` column), `trajectories.jsonl`, `report.md` (observed vs interpretation split; states the test set is used only here), `manifest.json` (own files). Deterministic branch ids derived by hash (no timestamps). Overwrite idempotently; re-running with identical inputs yields a byte-identical subtree (mock).
+- Parent files are not modified; parent manifest stays as written (document the additive zone in the docstring).
+Test spec: hermetic mock; temp bundles; includes the manifest-verify-before-model-creation spy test and the live-gate test.
+Named tests: `test_held_out_command_writes_subtree_for_evolution_bundle`; `test_held_out_command_verifies_before_model_creation`; `test_held_out_command_is_deterministic`; `test_held_out_requires_allow_live_for_live_provider`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_cli_held_out.py`
+Dependencies: B27
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+#### B29 — Frozen scientific inputs in bundles
+Epic: E7
+Goal: Bundles carry their dataset + fixtures with hashes; rerun/held-out verify before spending and regenerate from frozen copies.
+FILE allowlist (3): `src/skill_lab/cli.py`; `tests/test_cli_frozen_inputs.py`; `tests/test_cli_artifacts.py`
+- Implement §10 A-6: at bundle write time copy `settings.dataset_path` and `settings.fixtures_path` into `root/inputs/<basename>`; record sha256 + size in bundle `config.inputs`; the manifest walker covers them (verify by test).
+- `rerun` and `held-out`: after manifest verification, re-hash both frozen inputs against `config.inputs` and abort (exit 1) BEFORE `create_chat_model` on any mismatch; load tasks and fixtures from the frozen copies (not the live settings paths) for regeneration and held-out evaluation.
+- Applies to all bundle kinds written in B27 (ablation root, evolution, baseline) and the held-out subtree path.
+Test spec: hermetic mock; tamper test proves no model is created on mismatch.
+Named tests: `test_bundle_freezes_inputs_with_hashes`; `test_rerun_aborts_before_model_creation_on_input_tamper`; `test_rerun_uses_frozen_inputs`; `test_held_out_uses_frozen_inputs`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_cli_frozen_inputs.py tests/test_cli_artifacts.py`
+Dependencies: B28
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+#### B30 — Non-finite metric guards
+Epic: E7
+Goal: Non-finite floats cannot be constructed or evaluated into a promotion decision.
+FILE allowlist (3): `src/skill_lab/promotion.py`; `src/skill_lab/metrics.py`; `tests/test_promotion.py`
+- Implement §10 A-7: reject non-finite floats at construction for every float field of `EvaluationSummary` (`success_rate`, `regression_rate`, `skill_lift`, `no_skill_success_rate`, `improvement_over_no_skill`, `estimated_cost_usd`) and `PromotionPolicy` (`regression_threshold`, `cost_tolerance`) (e.g. `ConfigDict(allow_inf_nan=False)`; verify it actually rejects).
+- `decide_promotion`: defensively treat any non-finite participant metric or threshold (including objects created via `model_construct`) as INCONCLUSIVE before arithmetic; evidence serialization must not crash on non-finite inputs.
+Test spec: construction-rejection probes per field; a `model_construct`-bypassed non-finite cost probe returns INCONCLUSIVE, not promote.
+Named tests: `test_nonfinite_metrics_rejected_at_construction`; `test_nonfinite_constructed_metrics_are_inconclusive`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_promotion.py`
+Dependencies: B24
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+#### B31 — Poisoned leakage boundary tests
+Epic: E7
+Goal: Prove the frozen leakage boundary against poisons in every PLAN §5 location, including store rows.
+FILE allowlist (3): `tests/test_leakage.py`; `tests/test_held_out.py`; `tests/test_mutation.py`
+- Implement §10 A-8's test matrix in a new `tests/test_leakage.py`: inject `POISON-VALIDATION` / `POISON-TEST` into task input, expected_outcome, invariants, trajectory content, and store rows; run the full mock ablation with spy wrappers capturing every mutation request, failure packet, persisted mutation row, and candidate markdown. Assert: no marker appears in any mutation request/prompt record/response/candidate markdown/persisted mutation row; all runs fed to failure selection are train split; markers DO appear in later held-out-phase requests (injection proof).
+- `test_test_split_unreachable_before_held_out_phase`: wrap `run_held_out` to timestamp the phase and assert no request carrying a test-split task is issued before it.
+- `test_evolve_guard_rejects_test_tasks`: direct `evolve` call with a test task raises ValueError and issues no model calls.
+- Strengthen `tests/test_held_out.py`'s boundary test internals (same test names): poison expected_outcome/invariants/store rows, not only input.
+Test spec: hermetic mock only; deterministic.
+Named tests: `test_poison_never_reaches_mutation_boundary`; `test_test_split_unreachable_before_held_out_phase`; `test_evolve_guard_rejects_test_tasks`; `test_stored_rows_do_not_feed_mutation`
+Acceptance: `uv run ruff check . && uv run pytest tests/test_leakage.py tests/test_held_out.py tests/test_mutation.py`
+Dependencies: B30
+Do not touch: all files other than the allowlist
+Evidence bundle: targeted pytest; collect count; ruff; full suite
+
+### Post-chain operator steps (not cards)
+
+After B31: regenerate `artifacts/example-mock` from the fixed code (`generate-example`), run the §5 acceptance block on the regenerated tree, commit, then run integrity review 2 on the new commit before any live spend. The regenerated example must show non-empty `prompts.jsonl`, all lineage versions, frozen `inputs/`, and the byte-identical rerun contract intact.
+
