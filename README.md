@@ -123,9 +123,12 @@ input; timestamps appear only in experiment identifiers.
 
 `configs/default.json` carries the frozen defaults (mock model; agent step/token budgets;
 promotion thresholds; pricing table). Environment overrides use the `SKILL_LAB_*` variables
-listed in `.env.example`. The live adapter is selected with `provider: "openai_compatible"`
-plus `base_url`, `model`, and `api_key_env`; a missing pricing entry for a live model is a
-configuration error, not a silent zero cost (only the mock is free).
+listed in `.env.example`. A ready-to-run live operator profile for DeepSeek's flash model
+ships as `configs/live-deepseek.json` (key read from `SKILL_LAB_API_KEY`; pricing is the
+2026-09-12 blended card, $0.225/M in · $0.9/M out). The live adapter is selected with
+`provider: "openai_compatible"` plus `base_url`, `model`, and `api_key_env`; a missing
+pricing entry for a live model is a configuration error, not a silent zero cost (only the
+mock is free).
 
 ## The committed example
 
