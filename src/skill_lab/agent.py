@@ -87,18 +87,39 @@ def run_agent(
         )
         try:
             response = model.complete(request.model_dump(mode="json"))
-            content, _, output_tokens, response_tokens, response_latency = _response_values(
-                response
-            )
         except Exception:
             outcome = Outcome.MODEL_ERROR
             break
 
+        try:
+            (
+                content,
+                input_tokens,
+                output_tokens,
+                response_tokens,
+                response_latency,
+                response_valid,
+            ) = _response_values_lenient(response)
+        except Exception:
+            (
+                content,
+                input_tokens,
+                output_tokens,
+                response_tokens,
+                response_latency,
+                response_valid,
+            ) = _salvage_response_values(response)
+
         steps += 1
-        total_tokens += response_tokens
+        total_tokens += input_tokens + output_tokens
         generated_tokens += output_tokens
         latency_ms += response_latency
-        messages.append({"role": "assistant", "content": content})
+        if content is not None:
+            messages.append({"role": "assistant", "content": content})
+
+        if not response_valid or response_tokens != input_tokens + output_tokens:
+            outcome = Outcome.MODEL_ERROR
+            break
 
         if generated_tokens > config.token_budget:
             outcome = Outcome.BUDGET_EXHAUSTED
@@ -201,10 +222,50 @@ def _response_values(response: Any) -> tuple[str, int, int, int, int]:
     return content, input_tokens, output_tokens, total_tokens, latency_ms
 
 
+def _response_values_lenient(
+    response: Any,
+) -> tuple[str | None, int, int, int, int, bool]:
+    """Extract response values without raising before the agent accounts for a call."""
+
+    content = _response_content_lenient(response)
+    input_tokens, input_valid = _response_integer_lenient(response, "input_tokens")
+    output_tokens, output_valid = _response_integer_lenient(response, "output_tokens")
+    total_value = _response_field_lenient(response, "total_tokens")
+    if total_value is _MISSING:
+        total_tokens = input_tokens + output_tokens
+        total_valid = True
+    else:
+        total_tokens, total_valid = _nonnegative_integer_lenient(total_value)
+    latency_ms, latency_valid = _response_integer_lenient(response, "latency_ms")
+    response_valid = (
+        content is not None and input_valid and output_valid and total_valid and latency_valid
+    )
+    return content, input_tokens, output_tokens, total_tokens, latency_ms, response_valid
+
+
+def _salvage_response_values(
+    response: Any,
+) -> tuple[str | None, int, int, int, int, bool]:
+    """Salvage valid numeric fields after an unexpected extraction failure."""
+
+    content = _response_content_lenient(response)
+    input_tokens, _ = _response_integer_lenient(response, "input_tokens")
+    output_tokens, _ = _response_integer_lenient(response, "output_tokens")
+    latency_ms, _ = _response_integer_lenient(response, "latency_ms")
+    return content, input_tokens, output_tokens, input_tokens + output_tokens, latency_ms, False
+
+
 def _response_field(response: Any, name: str) -> Any:
     if isinstance(response, Mapping):
         return response.get(name, _MISSING)
     return getattr(response, name, _MISSING)
+
+
+def _response_field_lenient(response: Any, name: str) -> Any:
+    try:
+        return _response_field(response, name)
+    except Exception:
+        return _MISSING
 
 
 def _response_integer(response: Any, name: str) -> int:
@@ -214,10 +275,40 @@ def _response_integer(response: Any, name: str) -> int:
     return _as_nonnegative_integer(value, name)
 
 
+def _response_integer_lenient(response: Any, name: str) -> tuple[int, bool]:
+    value = _response_field_lenient(response, name)
+    if value is _MISSING or value is None:
+        return 0, True
+    return _nonnegative_integer_lenient(value)
+
+
 def _as_nonnegative_integer(value: Any, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"model response {name} must be a non-negative integer")
     return value
+
+
+def _nonnegative_integer_lenient(value: Any) -> tuple[int, bool]:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0, False
+    return value, True
+
+
+def _response_content_lenient(response: Any) -> str | None:
+    if isinstance(response, str):
+        return response
+    content_value = _response_field_lenient(response, "content")
+    if content_value is _MISSING:
+        try:
+            if isinstance(response, Mapping) and "action" in response:
+                content_value = json.dumps(dict(response), sort_keys=True)
+            else:
+                output = _response_field_lenient(response, "output")
+                if isinstance(output, Mapping):
+                    content_value = json.dumps(dict(output), sort_keys=True)
+        except Exception:
+            return None
+    return content_value if isinstance(content_value, str) else None
 
 
 def _is_tool_error(result: Mapping[str, Any]) -> bool:

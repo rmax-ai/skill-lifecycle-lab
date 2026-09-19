@@ -1640,13 +1640,7 @@ def _usage_from_response(response: Any, model: ChatModel) -> _Usage:
     output_tokens = _nonnegative_int(_response_value(response, "output_tokens"))
     model_id = _response_value(response, "model")
     if not isinstance(model_id, str) or not model_id:
-        candidate = getattr(model, "model_id", None)
-        if isinstance(candidate, str) and candidate:
-            model_id = candidate
-        else:
-            config = getattr(model, "config", None)
-            candidate = getattr(config, "model", None)
-            model_id = candidate if isinstance(candidate, str) and candidate else None
+        model_id = None
     return _Usage(input_tokens, output_tokens, model_id)
 
 
