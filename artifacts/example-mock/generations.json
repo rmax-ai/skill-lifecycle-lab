@@ -137,7 +137,6 @@
           "validation_lift": 0.16666666666666663
         },
         "reason_codes": [],
-        "regression_denominator": 5,
         "regression_rate": 0.0,
         "regression_threshold": 0.0,
         "skill_lift": 0.16666666666666663
@@ -384,7 +383,6 @@
           "regression_threshold_exceeded",
           "prohibited_actions_increased"
         ],
-        "regression_denominator": 6,
         "regression_rate": 0.16666666666666666,
         "regression_threshold": 0.0,
         "skill_lift": -0.16666666666666663

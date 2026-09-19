@@ -28,10 +28,7 @@
 | Condition | Split | Skill | Success | Runs | Tool Calls | Tokens | Violations |
 |---|---|---|---:|---:|---:|---:|---:|
 | evolved_naive | test | v003 | 1.000000 | 6 | 35 | 27448 | 0 |
-| evolved_naive | test | v003 | 1.000000 | 6 | 35 | 27448 | 0 |
 | no_skill | test | n/a | 0.666667 | 6 | 41 | 20768 | 2 |
-| no_skill | test | n/a | 0.666667 | 6 | 41 | 20768 | 2 |
-| seed | test | v001 | 1.000000 | 6 | 35 | 36709 | 0 |
 | seed | test | v001 | 1.000000 | 6 | 35 | 36709 | 0 |
 
 ## Skill Lineage
@@ -63,10 +60,11 @@ All statements in this section describe supplied records and are labeled observe
 | evolved_naive | train | v002 | 1.000000 | 12 | 71 | 55543 | 0 |
 
 Observed generation records: `2`.
+Observed prompt records: 2
 Observed final skill: `v003`.
 
 ## Interpretation/Conclusions
 
 - This artifact is descriptive; it does not establish causality between a mutation and any observed metric.
 - A scripted mock result, when present, describes the offline harness and is not evidence of general model performance.
-- Held-out interpretation is unavailable when no held-out summaries are supplied.
+- Held-out results include 3 observed summary rows covering 18 observed runs.

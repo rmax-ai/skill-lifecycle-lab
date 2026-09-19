@@ -1,0 +1,458 @@
+{
+  "customers": [
+    {
+      "approval_required": true,
+      "id": "C01",
+      "region": "us",
+      "tier": "enterprise"
+    },
+    {
+      "approval_required": false,
+      "id": "C02",
+      "region": "eu",
+      "tier": "standard"
+    },
+    {
+      "approval_required": true,
+      "id": "C03",
+      "region": "us",
+      "tier": "enterprise"
+    },
+    {
+      "approval_required": false,
+      "id": "C04",
+      "region": "eu",
+      "tier": "standard"
+    },
+    {
+      "approval_required": false,
+      "id": "C05",
+      "region": "us",
+      "tier": "enterprise"
+    },
+    {
+      "approval_required": false,
+      "id": "C06",
+      "region": "eu",
+      "tier": "standard"
+    },
+    {
+      "approval_required": true,
+      "id": "C07",
+      "region": "us",
+      "tier": "enterprise"
+    },
+    {
+      "approval_required": false,
+      "id": "C08",
+      "region": "eu",
+      "tier": "standard"
+    },
+    {
+      "approval_required": true,
+      "id": "C09",
+      "region": "us",
+      "tier": "enterprise"
+    },
+    {
+      "approval_required": false,
+      "id": "C10",
+      "region": "eu",
+      "tier": "standard"
+    },
+    {
+      "approval_required": true,
+      "id": "C11",
+      "region": "us",
+      "tier": "enterprise"
+    },
+    {
+      "approval_required": false,
+      "id": "C12",
+      "region": "eu",
+      "tier": "standard"
+    },
+    {
+      "approval_required": false,
+      "id": "C13",
+      "region": "us",
+      "tier": "enterprise"
+    },
+    {
+      "approval_required": true,
+      "id": "C14",
+      "region": "eu",
+      "tier": "standard"
+    },
+    {
+      "approval_required": true,
+      "id": "C15",
+      "region": "us",
+      "tier": "enterprise"
+    },
+    {
+      "approval_required": false,
+      "id": "C16",
+      "region": "eu",
+      "tier": "standard"
+    },
+    {
+      "approval_required": true,
+      "id": "C17",
+      "region": "us",
+      "tier": "enterprise"
+    },
+    {
+      "approval_required": false,
+      "id": "C18",
+      "region": "eu",
+      "tier": "standard"
+    },
+    {
+      "approval_required": true,
+      "id": "C19",
+      "region": "us",
+      "tier": "enterprise"
+    },
+    {
+      "approval_required": false,
+      "id": "C20",
+      "region": "eu",
+      "tier": "standard"
+    },
+    {
+      "approval_required": true,
+      "id": "C21",
+      "region": "us",
+      "tier": "enterprise"
+    },
+    {
+      "approval_required": false,
+      "id": "C22",
+      "region": "eu",
+      "tier": "standard"
+    },
+    {
+      "approval_required": true,
+      "id": "C23",
+      "region": "us",
+      "tier": "enterprise"
+    },
+    {
+      "approval_required": false,
+      "id": "C24",
+      "region": "eu",
+      "tier": "standard"
+    }
+  ],
+  "dataset_version": "2026-01",
+  "runbooks": [
+    {
+      "approval_required": true,
+      "escalation_paths": {
+        "security": "security"
+      },
+      "required_evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "service_id": "S-AUTH"
+    },
+    {
+      "approval_required": false,
+      "escalation_paths": {
+        "billing": "support"
+      },
+      "required_evidence": [
+        "ticket",
+        "customer",
+        "runbook"
+      ],
+      "service_id": "S-BILL"
+    },
+    {
+      "approval_required": true,
+      "escalation_paths": {
+        "degradation": "service-desk",
+        "outage": "pager"
+      },
+      "required_evidence": [
+        "ticket",
+        "customer",
+        "status",
+        "runbook"
+      ],
+      "service_id": "S-CORE"
+    }
+  ],
+  "services": [
+    {
+      "affected_regions": [
+        "us"
+      ],
+      "id": "S-AUTH",
+      "incident_id": "INC-AUTH",
+      "status": "outage"
+    },
+    {
+      "affected_regions": [
+        "eu"
+      ],
+      "id": "S-BILL",
+      "incident_id": "INC-BILL",
+      "status": "degraded"
+    },
+    {
+      "affected_regions": [
+        "us",
+        "eu"
+      ],
+      "id": "S-CORE",
+      "incident_id": "INC-CORE",
+      "status": "degraded"
+    }
+  ],
+  "tickets": [
+    {
+      "classification": "outage",
+      "customer_id": "C01",
+      "id": "T01",
+      "impact": "regional",
+      "priority": "SEV1",
+      "service_id": "S-CORE",
+      "status": "open",
+      "summary": "outage incident T01"
+    },
+    {
+      "classification": "degradation",
+      "customer_id": "C02",
+      "id": "T02",
+      "impact": "regional",
+      "priority": "SEV2",
+      "service_id": "S-CORE",
+      "status": "open",
+      "summary": "degradation incident T02"
+    },
+    {
+      "classification": "security",
+      "customer_id": "C03",
+      "id": "T03",
+      "impact": "regional",
+      "priority": "SEV1",
+      "service_id": "S-AUTH",
+      "status": "open",
+      "summary": "security incident T03"
+    },
+    {
+      "classification": "billing",
+      "customer_id": "C04",
+      "id": "T04",
+      "impact": "regional",
+      "priority": "SEV3",
+      "service_id": "S-BILL",
+      "status": "open",
+      "summary": "billing incident T04"
+    },
+    {
+      "classification": "outage",
+      "customer_id": "C05",
+      "id": "T05",
+      "impact": "regional",
+      "priority": "SEV2",
+      "service_id": "S-CORE",
+      "status": "open",
+      "summary": "outage incident T05"
+    },
+    {
+      "classification": "degradation",
+      "customer_id": "C06",
+      "id": "T06",
+      "impact": "regional",
+      "priority": "SEV3",
+      "service_id": "S-CORE",
+      "status": "open",
+      "summary": "degradation incident T06"
+    },
+    {
+      "classification": "security",
+      "customer_id": "C07",
+      "id": "T07",
+      "impact": "regional",
+      "priority": "SEV2",
+      "service_id": "S-AUTH",
+      "status": "open",
+      "summary": "security incident T07"
+    },
+    {
+      "classification": "billing",
+      "customer_id": "C08",
+      "id": "T08",
+      "impact": "regional",
+      "priority": "SEV3",
+      "service_id": "S-BILL",
+      "status": "open",
+      "summary": "billing incident T08"
+    },
+    {
+      "classification": "outage",
+      "customer_id": "C09",
+      "id": "T09",
+      "impact": "regional",
+      "priority": "SEV1",
+      "service_id": "S-CORE",
+      "status": "open",
+      "summary": "outage incident T09"
+    },
+    {
+      "classification": "degradation",
+      "customer_id": "C10",
+      "id": "T10",
+      "impact": "regional",
+      "priority": "SEV2",
+      "service_id": "S-CORE",
+      "status": "open",
+      "summary": "degradation incident T10"
+    },
+    {
+      "classification": "security",
+      "customer_id": "C11",
+      "id": "T11",
+      "impact": "regional",
+      "priority": "SEV1",
+      "service_id": "S-AUTH",
+      "status": "open",
+      "summary": "security incident T11"
+    },
+    {
+      "classification": "billing",
+      "customer_id": "C12",
+      "id": "T12",
+      "impact": "regional",
+      "priority": "SEV3",
+      "service_id": "S-BILL",
+      "status": "open",
+      "summary": "billing incident T12"
+    },
+    {
+      "classification": "outage",
+      "customer_id": "C13",
+      "id": "T13",
+      "impact": "regional",
+      "priority": "SEV2",
+      "service_id": "S-CORE",
+      "status": "open",
+      "summary": "outage incident T13"
+    },
+    {
+      "classification": "degradation",
+      "customer_id": "C14",
+      "id": "T14",
+      "impact": "regional",
+      "priority": "SEV2",
+      "service_id": "S-CORE",
+      "status": "open",
+      "summary": "degradation incident T14"
+    },
+    {
+      "classification": "security",
+      "customer_id": "C15",
+      "id": "T15",
+      "impact": "regional",
+      "priority": "SEV1",
+      "service_id": "S-AUTH",
+      "status": "open",
+      "summary": "security incident T15"
+    },
+    {
+      "classification": "billing",
+      "customer_id": "C16",
+      "id": "T16",
+      "impact": "regional",
+      "priority": "SEV3",
+      "service_id": "S-BILL",
+      "status": "open",
+      "summary": "billing incident T16"
+    },
+    {
+      "classification": "outage",
+      "customer_id": "C17",
+      "id": "T17",
+      "impact": "regional",
+      "priority": "SEV1",
+      "service_id": "S-CORE",
+      "status": "open",
+      "summary": "outage incident T17"
+    },
+    {
+      "classification": "degradation",
+      "customer_id": "C18",
+      "id": "T18",
+      "impact": "regional",
+      "priority": "SEV3",
+      "service_id": "S-CORE",
+      "status": "open",
+      "summary": "degradation incident T18"
+    },
+    {
+      "classification": "security",
+      "customer_id": "C19",
+      "id": "T19",
+      "impact": "regional",
+      "priority": "SEV2",
+      "service_id": "S-AUTH",
+      "status": "open",
+      "summary": "security incident T19"
+    },
+    {
+      "classification": "billing",
+      "customer_id": "C20",
+      "id": "T20",
+      "impact": "regional",
+      "priority": "SEV3",
+      "service_id": "S-BILL",
+      "status": "open",
+      "summary": "billing incident T20"
+    },
+    {
+      "classification": "outage",
+      "customer_id": "C21",
+      "id": "T21",
+      "impact": "regional",
+      "priority": "SEV1",
+      "service_id": "S-CORE",
+      "status": "open",
+      "summary": "outage incident T21"
+    },
+    {
+      "classification": "degradation",
+      "customer_id": "C22",
+      "id": "T22",
+      "impact": "regional",
+      "priority": "SEV2",
+      "service_id": "S-CORE",
+      "status": "open",
+      "summary": "degradation incident T22"
+    },
+    {
+      "classification": "security",
+      "customer_id": "C23",
+      "id": "T23",
+      "impact": "regional",
+      "priority": "SEV1",
+      "service_id": "S-AUTH",
+      "status": "open",
+      "summary": "security incident T23"
+    },
+    {
+      "classification": "billing",
+      "customer_id": "C24",
+      "id": "T24",
+      "impact": "regional",
+      "priority": "SEV3",
+      "service_id": "S-BILL",
+      "status": "open",
+      "summary": "billing incident T24"
+    }
+  ]
+}

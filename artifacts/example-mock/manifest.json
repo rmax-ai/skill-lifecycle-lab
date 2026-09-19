@@ -3,12 +3,20 @@
   "experiment_id": "exp-20000101T000000Z-deadbeef",
   "files": {
     "config.json": {
-      "sha256": "567d816b4b1e19b382d288673c1284265076e6be85e59ce0497c8bc029e3728c",
-      "size": 1276
+      "sha256": "a6ed619f73dc74c5ee1039ab00912fbf7b321bb8261595a84e9df9b22eae47a2",
+      "size": 1772
     },
     "generations.json": {
-      "sha256": "a13013a5e2e281e0473d6e5befaabec18cfecc15a3abd0c6d34ece39b5a6e577",
-      "size": 15686
+      "sha256": "32e2d2c67db49ea1b644cd831e8e08c02f279898ce590e5479f6c526b9b347fd",
+      "size": 15612
+    },
+    "inputs/incident_tasks.json": {
+      "sha256": "cacffa04303c770c516e55aa99a3e9a0f872cf76425e6618357594f30a54fd5b",
+      "size": 25611
+    },
+    "inputs/tool_world.json": {
+      "sha256": "c85085e612450d04b2b38d204cd0be513ece3d8ef2a71d406e4a1ca4cf7550c2",
+      "size": 9929
     },
     "naive/config.json": {
       "sha256": "dd0e7db0e3d0d02cf83113177842833bad540f622141f79c9629f8150365e605",
@@ -19,20 +27,40 @@
       "size": 865
     },
     "naive/manifest.json": {
-      "sha256": "88022d85286b7c9ef88a33162b5e118c94f00d5de11d472dbbefe0899c13607d",
-      "size": 1393
+      "sha256": "c14f08defbbf6860e939a186a0377c32b725d9c35841313e9ce15bc10a38a8de",
+      "size": 2194
     },
     "naive/prompts.jsonl": {
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "size": 0
+      "sha256": "35f6f78f05726824b3a50692911a06b95bba68e64f229e1feca9ff0b613821f7",
+      "size": 5885
     },
     "naive/report.md": {
-      "sha256": "013e0dd215e214c2a4833cd69eb6888bca60096a7b38edd964bae6ed4bad4603",
-      "size": 2311
+      "sha256": "3de4d9f45c3a589924c4041c4c617bd84e24358ecf936c46c128873b74102430",
+      "size": 2157
     },
     "naive/results.csv": {
-      "sha256": "822f7c5c44a444d654becf3b0666e877ece4ccd28960b0d54df1c5fb302d15e6",
-      "size": 2008
+      "sha256": "105c379df4e903263afe778352ccab85323d641fc655f39d7a7498737a96e52e",
+      "size": 5269
+    },
+    "naive/skills/incident-response/v001/SKILL.md": {
+      "sha256": "6749dc246761bfc2ad7b34cbebedf5336eb55291249d1192eac5e5e58cd761a3",
+      "size": 1716
+    },
+    "naive/skills/incident-response/v001/metadata.json": {
+      "sha256": "a1ab3ab5beee73ede04d4e49a3af7a540658fea96137689480562947564ba0d6",
+      "size": 89
+    },
+    "naive/skills/incident-response/v002/RATIONALE.md": {
+      "sha256": "35daaa94f7da417a516c082f8b32c1c382ec55b26eeac7e94549ad0d2cf02f61",
+      "size": 69
+    },
+    "naive/skills/incident-response/v002/SKILL.md": {
+      "sha256": "7cfcc97641cff116629082f7a7db2c97ece165addc330b9d8ba43e8dc1850741",
+      "size": 817
+    },
+    "naive/skills/incident-response/v002/metadata.json": {
+      "sha256": "43ecf51bb8547e77b00b416126ce09bd614c80fffa273437ea764a33abb5c967",
+      "size": 100
     },
     "naive/skills/incident-response/v003/RATIONALE.md": {
       "sha256": "d04689eced95669119fac0bce8ea4ba95c025a0c282c486212b04f62a2a0093c",
@@ -47,20 +75,20 @@
       "size": 100
     },
     "naive/trajectories.jsonl": {
-      "sha256": "9903c7f9120a962717ad5be564d67d91b907e134d16669387804757c35bd12e7",
-      "size": 121474
+      "sha256": "60e32afe339dd39c78f8bbbacd8267195bb56fe57105be9b85e63470c635944d",
+      "size": 293858
     },
     "prompts.jsonl": {
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "size": 0
+      "sha256": "8a5eb63971945b252fa3d765e54826e7121e8d6e99e2f3bc9ada86874de2425d",
+      "size": 5885
     },
     "report.md": {
-      "sha256": "7f54ec123ed1f7065813f66243e7527bce05127d7452a99bec7b7523a44e324a",
-      "size": 2478
+      "sha256": "2b232d96439b4ed94ab54796acfc8b1d8e0c06a10cce0b0ad943ef3fee85ee5c",
+      "size": 2321
     },
     "results.csv": {
-      "sha256": "cbb15d826f3aec8f89f07f83283bf274651c77d027aac79254e34e645a7d6640",
-      "size": 2026
+      "sha256": "c2f1e346e2214e0bd4f05a68c77f086210df0f7b0c46d4356891de17f0933f36",
+      "size": 8355
     },
     "skills/incident-response/v001/SKILL.md": {
       "sha256": "6749dc246761bfc2ad7b34cbebedf5336eb55291249d1192eac5e5e58cd761a3",
@@ -82,9 +110,21 @@
       "sha256": "a21c50bd4ec88424b0d225293e0612d97a6454dc708819253477a7ecce7e4e92",
       "size": 94
     },
+    "skills/incident-response/v003/RATIONALE.md": {
+      "sha256": "d04689eced95669119fac0bce8ea4ba95c025a0c282c486212b04f62a2a0093c",
+      "size": 116
+    },
+    "skills/incident-response/v003/SKILL.md": {
+      "sha256": "4a7957611bd1ee12384c424ecfef0123dda718377cd4c52e050e956f9c197f7e",
+      "size": 833
+    },
+    "skills/incident-response/v003/metadata.json": {
+      "sha256": "91c79a00b298abf928cb3bfb04fe6c4e6ff7637559f0fe9c6ee581d8e8b0993e",
+      "size": 94
+    },
     "trajectories.jsonl": {
-      "sha256": "3b1c3902ff1fb1a3eb582dde59e40c289d13f36f55927a75de9d7f0bf7e1bac5",
-      "size": 121396
+      "sha256": "b65b5f94f5c131f6948a7e74f7646865df99d7a7723ec428f061de532f503068",
+      "size": 464583
     }
   }
 }

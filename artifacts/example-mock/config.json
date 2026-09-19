@@ -4,10 +4,14 @@
   "branches": {
     "naive": {
       "experiment_id": "exp-20000101T000000Z-deadbeef",
+      "final_version": "v003",
+      "model_id": "mock-incident-v1",
       "path": "naive"
     },
     "verified": {
       "experiment_id": "exp-20000101T000000Z-deadbeef",
+      "final_version": "v002",
+      "model_id": "mock-incident-v1",
       "path": "."
     }
   },
@@ -48,5 +52,17 @@
     "skills_root": "skills"
   },
   "experiment_id": "exp-20000101T000000Z-deadbeef",
+  "inputs": {
+    "dataset": {
+      "path": "inputs/incident_tasks.json",
+      "sha256": "cacffa04303c770c516e55aa99a3e9a0f872cf76425e6618357594f30a54fd5b",
+      "size": 25611
+    },
+    "fixtures": {
+      "path": "inputs/tool_world.json",
+      "sha256": "c85085e612450d04b2b38d204cd0be513ece3d8ef2a71d406e4a1ca4cf7550c2",
+      "size": 9929
+    }
+  },
   "mode": "ablation"
 }
