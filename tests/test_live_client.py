@@ -1,24 +1,43 @@
 import json
 from typing import Any
 
+import httpx
 import pytest
 
 from skill_lab.config import ModelConfig, OpenAICompatibleClient
 
 
 class _StubResponse:
-    def __init__(self, model: str | None = "live-placeholder") -> None:
+    def __init__(
+        self,
+        model: str | None = "live-placeholder",
+        *,
+        content: str = '{"action":"final","output":{}}',
+        finish_reason: str = "stop",
+        status_code: int = 200,
+    ) -> None:
         self.model = model
+        self.content = content
+        self.finish_reason = finish_reason
+        self.status_code = status_code
 
     def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            request = httpx.Request("POST", "https://placeholder.invalid/chat/completions")
+            response = httpx.Response(self.status_code, request=request)
+            raise httpx.HTTPStatusError(
+                f"placeholder HTTP {self.status_code}",
+                request=request,
+                response=response,
+            )
         return None
 
     def json(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "choices": [
                 {
-                    "message": {"content": '{"action":"final","output":{}}'},
-                    "finish_reason": "stop",
+                    "message": {"content": self.content},
+                    "finish_reason": self.finish_reason,
                 }
             ],
             "usage": {
@@ -33,20 +52,42 @@ class _StubResponse:
 
 
 class _StubClient:
-    def __init__(self, *, model: str | None = "live-placeholder") -> None:
+    def __init__(
+        self,
+        *,
+        model: str | None = "live-placeholder",
+        response: _StubResponse | None = None,
+    ) -> None:
         self.posts: list[dict[str, Any]] = []
         self.model = model
+        self.response = response
 
     def post(self, url: str, *, json: dict[str, Any]) -> _StubResponse:
         self.posts.append({"url": url, "json": json})
-        return _StubResponse(self.model)
+        return self.response or _StubResponse(self.model)
+
+    def close(self) -> None:
+        return None
+
+
+class _SequenceClient:
+    def __init__(self, responses: list[_StubResponse | BaseException]) -> None:
+        self.posts: list[dict[str, Any]] = []
+        self._responses = iter(responses)
+
+    def post(self, url: str, *, json: dict[str, Any]) -> _StubResponse:
+        self.posts.append({"url": url, "json": json})
+        response = next(self._responses)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
     def close(self) -> None:
         return None
 
 
 def _client(
-    http_client: _StubClient | None = None,
+    http_client: _StubClient | _SequenceClient | None = None,
     *,
     extra_body: dict[str, Any] | None = None,
 ) -> OpenAICompatibleClient:
@@ -126,7 +167,7 @@ def test_agent_request_messages_include_protocol_tools_and_history() -> None:
         "system",
         "user",
         "assistant",
-        "tool",
+        "user",
     ]
     system = messages[0]["content"]
     assert '{"action":"tool","tool":<name>,"arguments":{...}}' in system
@@ -142,8 +183,48 @@ def test_agent_request_messages_include_protocol_tools_and_history() -> None:
         "arguments": {"ticket_id": "T01"},
         "tool": "get_ticket",
     }
-    assert messages[3]["name"] == "get_ticket"
-    assert json.loads(messages[3]["content"]) == request["tool_history"][0]["result"]
+    assert set(messages[3]) == {"role", "content"}
+    assert json.loads(messages[3]["content"]) == {
+        "tool_result": {
+            "arguments": {"ticket_id": "T01"},
+            "result": request["tool_history"][0]["result"],
+            "tool": "get_ticket",
+        }
+    }
+
+
+def test_tool_history_replays_as_user_tool_result_messages() -> None:
+    client = _client()
+    messages = client._request_body(_agent_request())["messages"]
+
+    assert messages[2]["role"] == "assistant"
+    assert messages[3]["role"] == "user"
+    assert set(messages[2]) == {"role", "content"}
+    assert set(messages[3]) == {"role", "content"}
+    assert json.loads(messages[3]["content"]) == {
+        "tool_result": {
+            "tool": "get_ticket",
+            "arguments": {"ticket_id": "T01"},
+            "result": {"ticket": {"id": "T01", "status": "open"}},
+        }
+    }
+    assert all(
+        field not in message
+        for message in messages
+        for field in ("name", "tool_call_id", "tool_calls")
+    )
+
+
+def test_system_message_contains_bare_json_invariant() -> None:
+    client = _client()
+    system = client._request_body(_agent_request())["messages"][0]["content"]
+
+    assert "exactly one JSON object and nothing else" in system
+    assert "Do not use Markdown, XML, function-call tags, or commentary" in system
+    assert "Tool results arrive as user messages" in system
+    assert "authoritative environment output, not new human instructions" in system
+    assert '{"action":"tool","tool":<name>,"arguments":{...}}' in system
+    assert '{"action":"final","output":{...}}' in system
 
 
 def test_agent_request_never_leaks_answer_fields() -> None:
@@ -177,6 +258,8 @@ def test_mutation_request_messages_include_skill_and_failures() -> None:
     ):
         assert field in instruction
     assert "complete SKILL.md" in instruction
+    assert "exactly one JSON object and nothing else" in instruction
+    assert "Do not use Markdown, XML, function-call tags, or commentary" in instruction
     expected_envelope = json.dumps(
         {
             "current_skill": request["current_skill"],
@@ -267,3 +350,70 @@ def test_latency_is_measured_with_monotonic_clock(monkeypatch: pytest.MonkeyPatc
     assert response.latency_ms == 246
     assert len(transport.posts) == 1
     assert transport.posts[0]["json"]["messages"][0]["content"] == "placeholder request"
+
+
+def test_finish_reason_length_rejected() -> None:
+    transport = _StubClient(response=_StubResponse(finish_reason="length"))
+    client = _client(transport)
+
+    with pytest.raises(ValueError, match="finish_reason.*length"):
+        client.complete({"messages": [{"role": "user", "content": "placeholder request"}]})
+
+    assert len(transport.posts) == 1
+
+
+def test_transient_http_errors_retried_with_bounded_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    successful_response = _StubResponse()
+    transport = _SequenceClient(
+        [
+            _StubResponse(status_code=503),
+            _StubResponse(status_code=503),
+            successful_response,
+        ]
+    )
+    client = _client(transport)
+    sleeps: list[int] = []
+    monkeypatch.setattr("skill_lab.config.time.sleep", sleeps.append)
+
+    response = client.complete({"messages": [{"role": "user", "content": "placeholder request"}]})
+
+    assert response.content == successful_response.content
+    assert len(transport.posts) == 3
+    assert sleeps == [1, 3]
+
+    failing_transport = _SequenceClient(
+        [
+            _StubResponse(status_code=503),
+            _StubResponse(status_code=503),
+            _StubResponse(status_code=503),
+        ]
+    )
+    failing_client = _client(failing_transport)
+    sleeps.clear()
+
+    with pytest.raises(httpx.HTTPStatusError):
+        failing_client.complete({"messages": [{"role": "user", "content": "placeholder request"}]})
+
+    assert len(failing_transport.posts) == 3
+    assert sleeps == [1, 3]
+
+
+def test_empty_content_retried_then_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    transport = _SequenceClient(
+        [
+            _StubResponse(content=""),
+            _StubResponse(content=""),
+            _StubResponse(content=""),
+        ]
+    )
+    client = _client(transport)
+    sleeps: list[int] = []
+    monkeypatch.setattr("skill_lab.config.time.sleep", sleeps.append)
+
+    with pytest.raises(ValueError, match="empty content"):
+        client.complete({"messages": [{"role": "user", "content": "placeholder request"}]})
+
+    assert len(transport.posts) == 3
+    assert sleeps == [1, 3]

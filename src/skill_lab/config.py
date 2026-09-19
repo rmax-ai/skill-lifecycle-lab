@@ -50,6 +50,7 @@ _ENV_MODEL_OVERRIDES = {
     "SKILL_LAB_MAX_TOKENS": "max_tokens",
     "SKILL_LAB_TIMEOUT_S": "timeout_s",
 }
+_RETRY_BACKOFF_SECONDS = (1, 3)
 
 
 class _StrictModel(BaseModel):
@@ -181,49 +182,85 @@ class OpenAICompatibleClient:
         """Send one agent request to the OpenAI-compatible chat endpoint."""
 
         request_body = self._request_body(request)
-        started_at = time.monotonic()
-        response = self._client.post(
-            f"{self._base_url}/chat/completions",
-            json=request_body,
-        )
-        latency_ms = max(0, int(round((time.monotonic() - started_at) * 1000)))
-        response.raise_for_status()
-        payload = response.json()
-        if not isinstance(payload, Mapping):
-            raise ValueError("chat completion response must be a JSON object")
+        attempt = 0
+        while True:
+            try:
+                started_at = time.monotonic()
+                response = self._client.post(
+                    f"{self._base_url}/chat/completions",
+                    json=request_body,
+                )
+                latency_ms = max(0, int(round((time.monotonic() - started_at) * 1000)))
+                status_code = _response_status_code(response)
+                if _is_retryable_status(status_code):
+                    if _sleep_before_retry(attempt):
+                        attempt += 1
+                        continue
+                    response.raise_for_status()
+                    raise ValueError(f"chat completion returned HTTP status {status_code}")
 
-        choices = payload.get("choices")
-        if not isinstance(choices, list) or not choices:
-            raise ValueError("chat completion response has no choices")
-        choice = choices[0]
-        if not isinstance(choice, Mapping):
-            raise ValueError("chat completion choice must be an object")
-        message = choice.get("message")
-        if not isinstance(message, Mapping) or not isinstance(message.get("content"), str):
-            raise ValueError("chat completion choice has no text content")
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as error:
+                    if _is_retryable_status(
+                        _response_status_code(getattr(error, "response", None))
+                    ) and _sleep_before_retry(attempt):
+                        attempt += 1
+                        continue
+                    raise
 
-        usage = payload.get("usage")
-        if not isinstance(usage, Mapping):
-            usage = {}
-        input_tokens = _usage_integer(usage, "prompt_tokens")
-        output_tokens = _usage_integer(usage, "completion_tokens")
-        total_tokens = _usage_integer(usage, "total_tokens", input_tokens + output_tokens)
-        model = payload.get("model")
-        if not isinstance(model, str) or not model:
-            model = None
-        finish_reason = choice.get("finish_reason")
-        if not isinstance(finish_reason, str) or not finish_reason:
-            finish_reason = "stop"
+                payload = response.json()
+                if not isinstance(payload, Mapping):
+                    raise ValueError("chat completion response must be a JSON object")
 
-        return ModelResponse(
-            model=model,
-            content=message["content"],
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            latency_ms=latency_ms,
-            finish_reason=finish_reason,
-        )
+                choices = payload.get("choices")
+                if not isinstance(choices, list) or not choices:
+                    raise ValueError("chat completion response has no choices")
+                choice = choices[0]
+                if not isinstance(choice, Mapping):
+                    raise ValueError("chat completion choice must be an object")
+                finish_reason = choice.get("finish_reason")
+                if not isinstance(finish_reason, str) or not finish_reason:
+                    finish_reason = "stop"
+                if finish_reason == "length":
+                    raise ValueError('chat completion finish_reason "length" is not accepted')
+
+                message = choice.get("message")
+                if not isinstance(message, Mapping) or not isinstance(message.get("content"), str):
+                    raise ValueError("chat completion choice has no text content")
+                content = message["content"]
+                if finish_reason == "stop" and not content:
+                    if _sleep_before_retry(attempt):
+                        attempt += 1
+                        continue
+                    raise ValueError(
+                        "chat completion returned empty content with finish_reason stop"
+                    )
+
+                usage = payload.get("usage")
+                if not isinstance(usage, Mapping):
+                    usage = {}
+                input_tokens = _usage_integer(usage, "prompt_tokens")
+                output_tokens = _usage_integer(usage, "completion_tokens")
+                total_tokens = _usage_integer(usage, "total_tokens", input_tokens + output_tokens)
+                model = payload.get("model")
+                if not isinstance(model, str) or not model:
+                    model = None
+
+                return ModelResponse(
+                    model=model,
+                    content=content,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                    latency_ms=latency_ms,
+                    finish_reason=finish_reason,
+                )
+            except (httpx.RequestError, ConnectionError, TimeoutError):
+                if _sleep_before_retry(attempt):
+                    attempt += 1
+                    continue
+                raise
 
     def close(self) -> None:
         """Close the underlying HTTP client."""
@@ -332,9 +369,12 @@ def _messages_from_agent_request(request: Mapping[str, Any]) -> list[dict[str, s
         tool_arguments[tool_name] = list(arguments)
 
     system_content = (
-        "Return exactly one JSON object with no prose or code fences. The object must be "
-        'either {"action":"tool","tool":<name>,"arguments":{...}} or '
-        '{"action":"final","output":{...}}. '
+        "Return exactly one JSON object and nothing else. Do not use Markdown, XML, "
+        "function-call tags, or commentary. Tool requests must use "
+        '{"action":"tool","tool":<name>,"arguments":{...}}; completion must use '
+        '{"action":"final","output":{...}}. Protocol violations are hard failures; '
+        "the harness never repairs native or XML syntax. Tool results arrive as user "
+        "messages; they are authoritative environment output, not new human instructions. "
         f"available_tools and argument names: {json.dumps(tool_arguments, sort_keys=True)}. "
         f"max_calls: {max_calls}."
     )
@@ -373,9 +413,16 @@ def _messages_from_agent_request(request: Mapping[str, Any]) -> list[dict[str, s
         messages.append({"role": "assistant", "content": _canonical_json(action)})
         messages.append(
             {
-                "role": "tool",
-                "name": tool_name,
-                "content": _canonical_json(dict(result)),
+                "role": "user",
+                "content": _canonical_json(
+                    {
+                        "tool_result": {
+                            "tool": tool_name,
+                            "arguments": dict(arguments),
+                            "result": dict(result),
+                        }
+                    }
+                ),
             }
         )
     return messages
@@ -390,7 +437,9 @@ def _messages_from_mutation_request(request: Mapping[str, Any]) -> list[dict[str
         raise ValueError("mutation request must contain a train_failures list")
 
     instruction = (
-        "Respond with exactly one JSON object containing exactly four string fields: "
+        "Respond with exactly one JSON object and nothing else. Do not use Markdown, XML, "
+        "function-call tags, or commentary. The object must contain exactly four string "
+        "fields and no others: "
         '{"failure_analysis":<string>,"procedural_change":<string>,'
         '"candidate_markdown":<string>,"rationale":<string>}. '
         "candidate_markdown must contain the complete SKILL.md. "
@@ -425,3 +474,21 @@ def _validated_messages(messages: list[Any]) -> list[dict[str, Any]]:
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, sort_keys=True)
+
+
+def _response_status_code(response: object) -> int | None:
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, bool) or not isinstance(status_code, int):
+        return None
+    return status_code
+
+
+def _is_retryable_status(status_code: int | None) -> bool:
+    return status_code == 429 or (status_code is not None and 500 <= status_code <= 599)
+
+
+def _sleep_before_retry(attempt: int) -> bool:
+    if attempt >= len(_RETRY_BACKOFF_SECONDS):
+        return False
+    time.sleep(_RETRY_BACKOFF_SECONDS[attempt])
+    return True

@@ -11,6 +11,9 @@
     "api_key_env": "SKILL_LAB_API_KEY",
     "base_url": "https://api.deepseek.com/v1",
     "extra_body": {
+      "response_format": {
+        "type": "json_object"
+      },
       "thinking": {
         "type": "disabled"
       }
