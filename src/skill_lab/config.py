@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
@@ -13,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from skill_lab.agent import AgentConfig
 from skill_lab.mock_model import ModelResponse, ScriptedMockModel
+from skill_lab.tools import _TOOL_ARGUMENTS
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "dataset_path": "datasets/incident_tasks.json",
@@ -176,10 +178,13 @@ class OpenAICompatibleClient:
     def complete(self, request: dict[str, Any]) -> ModelResponse:
         """Send one agent request to the OpenAI-compatible chat endpoint."""
 
+        request_body = self._request_body(request)
+        started_at = time.monotonic()
         response = self._client.post(
             f"{self._base_url}/chat/completions",
-            json=self._request_body(request),
+            json=request_body,
         )
+        latency_ms = max(0, int(round((time.monotonic() - started_at) * 1000)))
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, Mapping):
@@ -214,7 +219,7 @@ class OpenAICompatibleClient:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
-            latency_ms=0,
+            latency_ms=latency_ms,
             finish_reason=finish_reason,
         )
 
@@ -230,9 +235,16 @@ class OpenAICompatibleClient:
         self.close()
 
     def _request_body(self, request: Mapping[str, Any]) -> dict[str, Any]:
-        messages = request.get("messages")
-        if not isinstance(messages, list):
+        kind = request.get("kind")
+        if kind == "agent":
             messages = _messages_from_agent_request(request)
+        elif kind == "mutation":
+            messages = _messages_from_mutation_request(request)
+        else:
+            messages = request.get("messages")
+            if not isinstance(messages, list):
+                raise ValueError("request must have kind='agent', kind='mutation', or messages")
+            messages = _validated_messages(messages)
         return {
             "model": self.config.model,
             "messages": messages,
@@ -280,21 +292,122 @@ def _usage_integer(usage: Mapping[str, Any], name: str, default: int = 0) -> int
 
 
 def _messages_from_agent_request(request: Mapping[str, Any]) -> list[dict[str, str]]:
-    messages: list[dict[str, str]] = []
-    skill_markdown = request.get("skill_markdown")
-    if isinstance(skill_markdown, str) and skill_markdown:
-        messages.append({"role": "system", "content": skill_markdown})
-
     task = request.get("task")
-    task_input = task.get("input") if isinstance(task, Mapping) else None
-    if not isinstance(task_input, str):
-        task_input = json.dumps(
+    if not isinstance(task, Mapping):
+        raise ValueError("agent request must contain a task object")
+
+    task_input = task.get("input")
+    if not isinstance(task_input, str) or not task_input:
+        raise ValueError("agent task input must be a non-empty string")
+
+    available_tools = task.get("available_tools")
+    if not isinstance(available_tools, list):
+        raise ValueError("agent task available_tools must be a list")
+    if any(not isinstance(name, str) or not name for name in available_tools):
+        raise ValueError("agent task available_tools must contain non-empty strings")
+
+    max_calls = task.get("max_calls")
+    if isinstance(max_calls, bool) or not isinstance(max_calls, int) or max_calls < 1:
+        raise ValueError("agent task max_calls must be a positive integer")
+
+    tool_arguments: dict[str, list[str]] = {}
+    for tool_name in available_tools:
+        arguments = _TOOL_ARGUMENTS.get(tool_name)
+        if arguments is None:
+            raise ValueError(f"agent task contains unknown tool: {tool_name}")
+        tool_arguments[tool_name] = list(arguments)
+
+    system_content = (
+        "Return exactly one JSON object with no prose or code fences. The object must be "
+        'either {"action":"tool","tool":<name>,"arguments":{...}} or '
+        '{"action":"final","output":{...}}. '
+        f"available_tools and argument names: {json.dumps(tool_arguments, sort_keys=True)}. "
+        f"max_calls: {max_calls}."
+    )
+    skill_markdown = request.get("skill_markdown")
+    if skill_markdown is not None:
+        if not isinstance(skill_markdown, str):
+            raise ValueError("agent skill_markdown must be a string or null")
+        if skill_markdown:
+            system_content += f"\n\nSkill markdown:\n{skill_markdown}"
+
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": task_input},
+    ]
+
+    tool_history = request.get("tool_history", [])
+    if not isinstance(tool_history, list):
+        raise ValueError("agent tool_history must be a list")
+    for entry in tool_history:
+        if not isinstance(entry, Mapping):
+            raise ValueError("agent tool_history entries must be objects")
+        tool_name = entry.get("tool")
+        arguments = entry.get("arguments")
+        result = entry.get("result")
+        if not isinstance(tool_name, str) or not tool_name:
+            raise ValueError("agent tool history tool names must be non-empty strings")
+        if not isinstance(arguments, Mapping):
+            raise ValueError("agent tool history arguments must be objects")
+        if not isinstance(result, Mapping):
+            raise ValueError("agent tool history results must be objects")
+        action = {
+            "action": "tool",
+            "tool": tool_name,
+            "arguments": dict(arguments),
+        }
+        messages.append({"role": "assistant", "content": _canonical_json(action)})
+        messages.append(
             {
-                "task": task,
-                "task_id": request.get("task_id"),
-                "tool_history": request.get("tool_history", []),
-            },
-            sort_keys=True,
+                "role": "tool",
+                "name": tool_name,
+                "content": _canonical_json(dict(result)),
+            }
         )
-    messages.append({"role": "user", "content": task_input})
     return messages
+
+
+def _messages_from_mutation_request(request: Mapping[str, Any]) -> list[dict[str, str]]:
+    current_skill = request.get("current_skill")
+    train_failures = request.get("train_failures")
+    if not isinstance(current_skill, Mapping):
+        raise ValueError("mutation request must contain a current_skill object")
+    if not isinstance(train_failures, list):
+        raise ValueError("mutation request must contain a train_failures list")
+
+    instruction = (
+        "Respond with exactly one JSON object containing exactly four string fields: "
+        '{"failure_analysis":<string>,"procedural_change":<string>,'
+        '"candidate_markdown":<string>,"rationale":<string>}. '
+        "candidate_markdown must contain the complete SKILL.md. "
+        "Do not include task identifiers or validation/test evidence."
+    )
+    envelope = {
+        "current_skill": dict(current_skill),
+        "train_failures": train_failures,
+    }
+    return [
+        {"role": "system", "content": instruction},
+        {"role": "user", "content": _canonical_json(envelope)},
+    ]
+
+
+def _validated_messages(messages: list[Any]) -> list[dict[str, Any]]:
+    if not messages:
+        raise ValueError("messages must contain at least one non-empty message")
+    validated: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, Mapping):
+            raise ValueError("prebuilt messages must contain objects")
+        role = message.get("role")
+        content = message.get("content")
+        if not isinstance(role, str) or not role:
+            raise ValueError("prebuilt messages must have non-empty roles")
+        if not isinstance(content, str) or not content:
+            raise ValueError("prebuilt messages must have non-empty string content")
+        validated.append(dict(message))
+    return validated
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True)
