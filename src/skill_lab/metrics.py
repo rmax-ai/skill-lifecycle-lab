@@ -15,7 +15,7 @@ from skill_lab.models import Condition, Outcome, RunRecord, Split, Version
 class EvaluationSummary(BaseModel):
     """Aggregated evidence for one condition and split."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     experiment_id: str | None = None
     split: Split | None = None

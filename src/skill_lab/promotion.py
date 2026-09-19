@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,7 @@ from skill_lab.models import Decision, PromotionDecision, RejectionReason
 class PromotionPolicy(BaseModel):
     """Thresholds used by the independent promotion decision."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     regression_threshold: float = Field(ge=0, le=1)
     cost_tolerance: float = Field(ge=0)
@@ -31,10 +32,11 @@ def decide_promotion(
     """Decide promotion using only the two validation summaries and policy."""
 
     policy_model = _policy_model(policy)
+    inconclusive = _inconclusive(parent, candidate, policy_model)
     evidence = _evidence(parent, candidate, policy_model)
     reasons: list[RejectionReason]
 
-    if _inconclusive(parent, candidate):
+    if inconclusive:
         reasons = [RejectionReason.INCONCLUSIVE]
     else:
         reasons = []
@@ -109,7 +111,15 @@ def _policy_model(policy: PromotionPolicy | Mapping[str, Any] | Any) -> Promotio
         raise TypeError("policy must expose valid promotion thresholds") from error
 
 
-def _inconclusive(parent: EvaluationSummary, candidate: EvaluationSummary) -> bool:
+def _inconclusive(
+    parent: EvaluationSummary,
+    candidate: EvaluationSummary,
+    policy: PromotionPolicy,
+) -> bool:
+    if _has_nonfinite(parent) or _has_nonfinite(candidate):
+        return True
+    if not math.isfinite(policy.regression_threshold) or not math.isfinite(policy.cost_tolerance):
+        return True
     if parent.split is not None and parent.split.value != "validation":
         return True
     if candidate.split is not None and candidate.split.value != "validation":
@@ -133,50 +143,85 @@ def _evidence(
     candidate: EvaluationSummary,
     policy: PromotionPolicy,
 ) -> dict[str, Any]:
-    parent_data = parent.model_dump(mode="json")
-    candidate_data = candidate.model_dump(mode="json")
-    skill_lift = candidate.success_rate - parent.success_rate
-    cost_limit = parent.estimated_cost_usd * policy.cost_tolerance
-    return {
-        "parent": parent_data,
-        "candidate": candidate_data,
-        "policy": policy.model_dump(mode="json"),
-        "parent_success_rate": parent.success_rate,
-        "candidate_success_rate": candidate.success_rate,
-        "skill_lift": skill_lift,
-        "regression_rate": candidate.regression_rate,
-        "regression_threshold": policy.regression_threshold,
-        "parent_prohibited_actions": parent.prohibited_actions,
-        "candidate_prohibited_actions": candidate.prohibited_actions,
-        "parent_cost_usd": parent.estimated_cost_usd,
-        "candidate_cost_usd": candidate.estimated_cost_usd,
-        "cost_limit_usd": cost_limit,
-        "parent_run_count": parent.run_count,
-        "candidate_run_count": candidate.run_count,
-        "regression_denominator": candidate.regression_denominator,
-        "rates": {
+    parent_data = _json_safe(parent.model_dump(mode="json"))
+    candidate_data = _json_safe(candidate.model_dump(mode="json"))
+    skill_lift = (
+        candidate.success_rate - parent.success_rate
+        if math.isfinite(candidate.success_rate) and math.isfinite(parent.success_rate)
+        else None
+    )
+    cost_limit = (
+        parent.estimated_cost_usd * policy.cost_tolerance
+        if math.isfinite(parent.estimated_cost_usd) and math.isfinite(policy.cost_tolerance)
+        else None
+    )
+    return _json_safe(
+        {
+            "parent": parent_data,
+            "candidate": candidate_data,
+            "policy": policy.model_dump(mode="json"),
             "parent_success_rate": parent.success_rate,
             "candidate_success_rate": candidate.success_rate,
-            "candidate_regression_rate": candidate.regression_rate,
             "skill_lift": skill_lift,
-            "validation_lift": skill_lift,
-        },
-        "counts": {
+            "regression_rate": candidate.regression_rate,
+            "regression_threshold": policy.regression_threshold,
             "parent_run_count": parent.run_count,
             "candidate_run_count": candidate.run_count,
-            "parent_successful_runs": parent.successful_runs,
-            "candidate_successful_runs": candidate.successful_runs,
             "parent_prohibited_actions": parent.prohibited_actions,
             "candidate_prohibited_actions": candidate.prohibited_actions,
-            "candidate_regression_denominator": candidate.regression_denominator,
-        },
-        "costs": {
             "parent_cost_usd": parent.estimated_cost_usd,
             "candidate_cost_usd": candidate.estimated_cost_usd,
             "cost_limit_usd": cost_limit,
-        },
-        "reason_codes": [],
-    }
+            "rates": {
+                "parent_success_rate": parent.success_rate,
+                "candidate_success_rate": candidate.success_rate,
+                "candidate_regression_rate": candidate.regression_rate,
+                "skill_lift": skill_lift,
+                "validation_lift": skill_lift,
+            },
+            "counts": {
+                "parent_run_count": parent.run_count,
+                "candidate_run_count": candidate.run_count,
+                "parent_successful_runs": parent.successful_runs,
+                "candidate_successful_runs": candidate.successful_runs,
+                "parent_prohibited_actions": parent.prohibited_actions,
+                "candidate_prohibited_actions": candidate.prohibited_actions,
+                "candidate_regression_denominator": candidate.regression_denominator,
+            },
+            "costs": {
+                "parent_cost_usd": parent.estimated_cost_usd,
+                "candidate_cost_usd": candidate.estimated_cost_usd,
+                "cost_limit_usd": cost_limit,
+            },
+            "reason_codes": [],
+        }
+    )
+
+
+def _has_nonfinite(summary: EvaluationSummary) -> bool:
+    return _contains_nonfinite(summary.model_dump(mode="python"))
+
+
+def _contains_nonfinite(value: Any) -> bool:
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, Mapping):
+        return any(_contains_nonfinite(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_nonfinite(item) for item in value)
+    return False
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, Mapping):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 def _candidate_id(summary: EvaluationSummary) -> str:

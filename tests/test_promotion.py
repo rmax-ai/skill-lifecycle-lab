@@ -1,3 +1,9 @@
+import json
+import math
+
+import pytest
+from pydantic import ValidationError
+
 from skill_lab.metrics import EvaluationSummary
 from skill_lab.models import Decision, RejectionReason, Split
 from skill_lab.promotion import PromotionPolicy, decide_promotion
@@ -95,3 +101,50 @@ def test_rejects_inconclusive() -> None:
 
     assert decision.decision is Decision.REJECT
     assert decision.reason_codes == [RejectionReason.INCONCLUSIVE]
+
+
+def test_nonfinite_metrics_rejected_at_construction() -> None:
+    metric_fields = (
+        "success_rate",
+        "regression_rate",
+        "skill_lift",
+        "no_skill_success_rate",
+        "improvement_over_no_skill",
+        "estimated_cost_usd",
+    )
+    for field in metric_fields:
+        for value in (math.nan, math.inf, -math.inf):
+            with pytest.raises(ValidationError):
+                EvaluationSummary(**{field: value})
+
+    for field in ("regression_threshold", "cost_tolerance"):
+        for value in (math.nan, math.inf, -math.inf):
+            with pytest.raises(ValidationError):
+                PromotionPolicy(
+                    regression_threshold=value if field == "regression_threshold" else 0.1,
+                    cost_tolerance=value if field == "cost_tolerance" else 1.1,
+                )
+
+
+def test_nonfinite_constructed_metrics_are_inconclusive() -> None:
+    parent = summary(rate=0.8, successes=8)
+    candidate = summary(rate=0.9, successes=9, version="v002")
+    for metric_field, policy_field in (
+        ("estimated_cost_usd", None),
+        (None, "regression_threshold"),
+        (None, "cost_tolerance"),
+    ):
+        candidate_payload = candidate.model_dump()
+        if metric_field is not None:
+            candidate_payload[metric_field] = math.inf
+        constructed_candidate = EvaluationSummary.model_construct(**candidate_payload)
+        policy_payload = {"regression_threshold": 0.1, "cost_tolerance": 1.1}
+        if policy_field is not None:
+            policy_payload[policy_field] = math.inf
+        policy = PromotionPolicy.model_construct(**policy_payload)
+
+        decision = decide_promotion(parent, constructed_candidate, policy)
+
+        assert decision.decision is Decision.REJECT
+        assert decision.reason_codes == [RejectionReason.INCONCLUSIVE]
+        json.dumps(decision.evidence, allow_nan=False)
