@@ -149,7 +149,9 @@
   "runbooks": [
     {
       "approval_required": true,
-      "escalation_path": "security",
+      "escalation_paths": {
+        "security": "security"
+      },
       "required_evidence": [
         "ticket",
         "customer",
@@ -159,7 +161,9 @@
     },
     {
       "approval_required": false,
-      "escalation_path": "support",
+      "escalation_paths": {
+        "billing": "support"
+      },
       "required_evidence": [
         "ticket",
         "customer",
@@ -169,7 +173,10 @@
     },
     {
       "approval_required": true,
-      "escalation_path": "pager",
+      "escalation_paths": {
+        "degradation": "service-desk",
+        "outage": "pager"
+      },
       "required_evidence": [
         "ticket",
         "customer",
